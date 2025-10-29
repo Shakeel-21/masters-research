@@ -103,24 +103,30 @@ def run_clustering(input_dir, output_dir, n_clusters, method, dedup=False, min_w
     print(f"Filtered to {len(valid_paths)} images (width >= {min_width}).")
 
     # 3. Deduplication step
-    if dedup:
-        if method in ['phash', 'dhash']:
-            print("Filtering for duplicate images using hashes...")
-            unique_features = []
-            unique_paths = []
-            seen_hashes = set()
-            
-            for feat, path in zip(features, valid_paths):
-                if feat not in seen_hashes:
-                    seen_hashes.add(feat)
-                    unique_features.append(feat)
-                    unique_paths.append(path)
-            
-            print(f"Filtered count (unique images): {len(unique_paths)}")
-            features = unique_features
-            valid_paths = unique_paths
-        else:
-            print(f"Warning: Deduplication is only supported for 'phash' or 'dhash'. Skipping for '{method}'.")
+
+    HIST_DUPLICATE_THRESHOLD = 0.1
+        
+    unique_features = []
+    unique_paths = []
+
+    # This is an O(n*m) operation (n=total, m=unique), so we add a progress bar
+    for feat, path in tqdm(zip(features, valid_paths), desc="Deduplicating", total=len(features)):
+        is_duplicate = False
+        for unique_feat in unique_features:
+            # Compare the new feature to all existing unique ones
+            dist = cv2.compareHist(feat, unique_feat, cv2.HISTCMP_BHATTACHARYYA)
+            if dist < HIST_DUPLICATE_THRESHOLD:
+                is_duplicate = True
+                break # Stop checking, it's a duplicate
+        
+        if not is_duplicate:
+            unique_features.append(feat)
+            unique_paths.append(path)
+
+    print(f"Filtered count (unique images): {len(unique_paths)}")
+    features = unique_features
+    valid_paths = unique_paths
+        
 
     n_images = len(valid_paths)
     if n_images < n_clusters:
@@ -151,7 +157,7 @@ def run_clustering(input_dir, output_dir, n_clusters, method, dedup=False, min_w
 
     for idx, (original_path, label) in enumerate(zip(valid_paths, labels)):
         target_dir = output_path / f"cluster_{label}"
-        new_name = f"{idx}_{original_path.name}"
+        new_name = f"{original_path.name}"
         shutil.copy(original_path, target_dir / new_name)
 
     print(f"\nDone! Clustered {n_images} images into {n_clusters} bins at '{output_path}'.")

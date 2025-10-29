@@ -125,7 +125,7 @@ def extract_and_save_masks_by_tile(image_path, demo, output_dir, image_hashes, c
                 if not is_duplicate:
                     image_hashes.append(current_hash)
 
-                    segment_filename = f"segment_{len(image_hashes):04d}_score_{score:.3f}.png"
+                    segment_filename = f"{base_name}_seg_{new_segments_found}.png"
                     segment_path = os.path.join(image_output_dir, segment_filename)
                     cv2.imwrite(segment_path, masked_segment)
                     new_segments_found += 1
