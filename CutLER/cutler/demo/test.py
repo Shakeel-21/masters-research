@@ -67,12 +67,11 @@ def extract_and_save_masks_by_tile(image_path, demo, output_dir, image_hashes, c
     y_offset = 0
     crop_y_end = H
 
-    # --- MODIFICATION: Remove y-loop, only loop over x-axis ---
+   
     for x_offset in range(0, W, stride_x):
-        # --- MODIFICATION: Use crop_width (from new function signature) ---
         crop_x_end = min(x_offset + crop_width, W)
         
-        # --- MODIFICATION: Crop is now full height [0:H] and slides along the x-axis ---
+
         current_crop = img[y_offset:crop_y_end, x_offset:crop_x_end]
 
         if current_crop.shape[0] == 0 or current_crop.shape[1] == 0:
