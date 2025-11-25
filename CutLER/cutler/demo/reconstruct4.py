@@ -245,9 +245,9 @@ class LevelReconstructor:
 if __name__ == "__main__":
     
     # --- Configuration ---
-    SEGMENTS_BASE_PATH = Path("output_segments/remakeTrans")
+    SEGMENTS_BASE_PATH = Path("output_segments/core3Remake")
     ORIGINAL_PATH = Path("demo/imgs/test")
-    RECONSTRUCTION_PATH = Path("output_segments/reconstructionsTrans")
+    RECONSTRUCTION_PATH = Path("output_segments/core3Recon")
     UNMATCHED_PATH = Path("output_segments/unmatched")
     MATCH_THRESHOLD = 1000 # Error threshold for TM_SQDIFF
 

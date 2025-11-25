@@ -58,7 +58,7 @@ def compare_images(img1, img2):
 
 if __name__ == "__main__":
     
-    RECONSTRUCTION_PATH = Path("output_segments/reconstructionsTrans")
+    RECONSTRUCTION_PATH = Path("output_segments/lessDupRecon")
     ORIGINAL_PATH = Path("demo/imgs/test")
 
     # 1. Load both sets of images into memory

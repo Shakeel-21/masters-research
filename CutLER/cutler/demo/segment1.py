@@ -50,22 +50,18 @@ def extract_and_save_masks_by_tile(image_path, demo, output_dir, image_hashes, c
     in the final segments.
     """
     HAMMING_DISTANCE_THRESHOLD = 10
-
-    # --- ⭐️ START: Load image with alpha preservation ---
-    # img = read_image(image_path, format="BGR") # <-- OLD: Discards alpha
     
+
     # Load the image with all channels (including alpha, if present)
     img_orig = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
-
     # Ensure the image is 4-channel BGRA for consistent processing
     if img_orig.shape[2] == 3:
         img_orig_bgra = cv2.cvtColor(img_orig, cv2.COLOR_BGR2BGRA)
     else:
-        # Assume it's already 4-channel (e.g., BGRA, RGBA)
-        # Note: If it's another 4-ch format, this might need adjustment,
-        # but BGRA is most common for cv2.
         img_orig_bgra = img_orig
 
+    alpha = img_orig_bgra[:,:,3]
+    img_orig_bgra[alpha == 0] = [0,0,0,0]
     # Create a 3-channel BGR version *only* for the model prediction
     img_bgr_for_model = cv2.cvtColor(img_orig_bgra, cv2.COLOR_BGRA2BGR)
     

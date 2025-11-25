@@ -33,6 +33,9 @@ MANIFEST
 */OUTPUT/
 */wandb/
 
+
+CutLER/cutler/output_segments/
+.png
 # local scripts
 */*.sh
 

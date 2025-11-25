@@ -4,32 +4,22 @@ from pathlib import Path
 from tqdm import tqdm
 import sys
 
-SEGMENT_PATH = Path("output_segments/results/trans")
+SEGMENT_PATH = Path("output_segments/core3")
 ORIGINAL_PATH = Path("demo/imgs/test")
-BLOCKS_PATH = Path("output_segments/remakeTrans")
+BLOCKS_PATH = Path("output_segments/core3Remake")
 
 MATCH_THRESHOLD = 1000
+# NMS_THRESHOLD: Controls how much overlap is allowed. 
+# 0.3 means if two boxes overlap by more than 30%, the one with the lower score is deleted.
+NMS_OVERLAP_THRESHOLD = 0.3 
 
 def get_source_name(template_name: str) -> str:
-    """
-    Extracts the source image name from the template filename.
-    e.g., 'mario-6-2_seg_8.png' -> 'mario-6-2'
-    """
     if "_seg_" not in template_name:
-        print(f"Warning: Template '{template_name}' may have an invalid name format.", file=sys.stderr)
-        return template_name.split('.')[0] # Best guess
-        
+        # print(f"Warning: Template '{template_name}' may have an invalid name format.", file=sys.stderr)
+        return template_name.split('.')[0] 
     return template_name.split("_seg_")[0]
 
-# --- MODIFIED FUNCTION ---
 def load_images(base_path: Path, recursive: bool = False, description: str = "Loading", read_flag: int = cv2.IMREAD_COLOR):
-    """
-    Loads all images from a directory into a dictionary {filename: image_object}.
-    
-    Args:
-        read_flag: The OpenCV flag to use for reading images (e.g.,
-                   cv2.IMREAD_COLOR or cv2.IMREAD_UNCHANGED).
-    """
     pattern = '**/*.png' if recursive else '*.png'
     image_files = list(base_path.glob(pattern))
     image_cache = {}
@@ -38,36 +28,16 @@ def load_images(base_path: Path, recursive: bool = False, description: str = "Lo
         print(f"Warning: No PNG files found in {base_path} with pattern '{pattern}'", file=sys.stderr)
         return image_cache
 
-    print(f"\nLoading {len(image_files)} images from {base_path}...")
     pbar = tqdm(image_files, desc=description, unit="img")
     for img_path in pbar:
-        # --- Use the specified read_flag ---
         img = cv2.imread(str(img_path), read_flag)
-        
         if img is not None:
             image_cache[img_path.name] = img
-        else:
-            print(f"Warning: Failed to load image {img_path}", file=sys.stderr)
-            
     return image_cache
 
 def main():
-    # --- MODIFIED CALLS ---
-    # Load templates WITH alpha channel (4-channel)
-    template_cache = load_images(
-        SEGMENT_PATH, 
-        recursive=True, 
-        description="Loading Templates", 
-        read_flag=cv2.IMREAD_UNCHANGED
-    )
-    # Load source images WITHOUT alpha channel (3-channel)
-    source_image_cache = load_images(
-        ORIGINAL_PATH, 
-        recursive=False, 
-        description="Loading Source Images", 
-        read_flag=cv2.IMREAD_COLOR
-    )
-    # --- END MODIFIED CALLS ---
+    template_cache = load_images(SEGMENT_PATH, recursive=True, description="Loading Templates", read_flag=cv2.IMREAD_UNCHANGED)
+    source_image_cache = load_images(ORIGINAL_PATH, recursive=False, description="Loading Source Images", read_flag=cv2.IMREAD_COLOR)
 
     level_match_report = {level_name: [] for level_name in source_image_cache.keys()}
 
@@ -76,61 +46,82 @@ def main():
     for level_name, level_img in pbar_levels:
         pbar_levels.set_postfix_str(f"Scanning {level_name}...")
         
-        # Renamed for clarity
+        # --- CHANGE 1: Create a list to hold ALL potential matches for this level ---
+        # We cannot save them yet. We must let them "fight" first.
+        candidates = [] 
+        
         for template_name, template_img_bgra in template_cache.items():
             
-            # --- START: TRANSPARENCY FIX ---
-            
-            # 1. Skip if template isn't 4-channel (BGRA)
-            if template_img_bgra.shape[2] != 4:
-                print(f"Warning: Template {template_name} is not 4-channel, skipping.", file=sys.stderr)
-                continue
-                
-            # 2. Extract the alpha channel (index 3) to use as the mask
+            # --- Transparency Setup (Same as before) ---
+            if template_img_bgra.shape[2] != 4: continue
             mask = template_img_bgra[:, :, 3]
-
-            # 3. Get the 3-channel BGR part for the template matching
             template_bgr = cv2.cvtColor(template_img_bgra, cv2.COLOR_BGRA2BGR)
-            
-            # 4. Check if mask is all-zero (fully transparent)
-            if cv2.countNonZero(mask) == 0:
-                continue # No visible pixels to match
-
-            # --- END: TRANSPARENCY FIX ---
+            if cv2.countNonZero(mask) == 0: continue
             
             try:
-                # 5. Match using the 3-channel template and its *real* alpha mask
+                # Match
                 result = cv2.matchTemplate(level_img, template_bgr, cv2.TM_SQDIFF, mask=mask)
-                min_val, _max_val, _min_loc, _max_loc = cv2.minMaxLoc(result)
+                min_val, _max_val, min_loc, _max_loc = cv2.minMaxLoc(result)
                 
-                # 6. Check threshold
+                # Check threshold
                 if min_val <= MATCH_THRESHOLD:
-                    level_match_report[level_name].append(template_name)
+                    
+                    # --- THE FIX FOR "FULL BLOCK vs MIDDLE PART" ---
+                    
+                    # A. Calculate Base Quality (0.0 to 1.0)
+                    # 1.0 is a perfect pixel match, 0.0 is barely passing the threshold
+                    match_quality = 1.0 - (min_val / MATCH_THRESHOLD)
+                    
+                    # B. Get the Area (Size) of the template
+                    h, w = template_bgr.shape[:2]
+                    area = h * w
+                    
+                    # C. Calculate Final Score: Quality * Area
+                    # This ensures a 16x16 block always beats an 8x8 block
+                    # even if the 8x8 block has a slightly "cleaner" pixel match.
+                    weighted_score = match_quality * area
+                    
+                    # Store candidate with the NEW weighted_score
+                    candidates.append({
+                        "box": [min_loc[0], min_loc[1], w, h],
+                        "score": weighted_score, 
+                        "name": template_name
+                    })
                     
             except cv2.error as e:
-                # print(f"OpenCV error matching {template_name}: {e}", file=sys.stderr)
                 continue
 
-    print("\n--- Level Match Report ---")
+        # --- CHANGE 3: Apply Non-Maximum Suppression (NMS) ---
+        if candidates:
+            # Extract lists for OpenCV NMS function
+            boxes = [c["box"] for c in candidates]
+            scores = [c["score"] for c in candidates]
+            
+            # Run NMS
+            # score_threshold=0 because we already filtered by MATCH_THRESHOLD manually above
+            indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.0, nms_threshold=NMS_OVERLAP_THRESHOLD)
+            
+            # indices returns a list of integers representing the winners
+            if len(indices) > 0:
+                for i in indices.flatten():
+                    winner = candidates[i]
+                    level_match_report[level_name].append(winner["name"])
+
+    # --- Report and Save (Mostly unchanged, just iterates the winners) ---
+    print("\n--- Level Match Report (After NMS Cleaning) ---")
     for level_name, templates in level_match_report.items():
         if templates:
             level_folder_name = Path(level_name).stem
             level_output_dir = BLOCKS_PATH / level_folder_name
             level_output_dir.mkdir(parents=True, exist_ok=True)
-            print(f"\n✅ Level: {level_name} ({len(templates)} segments found)")
+            print(f"\n✅ Level: {level_name} ({len(templates)} segments saved)")
             
             for i, tpl_name in enumerate(templates):
                 print(f"   {i+1}. {tpl_name}")
-                
-                # --- START: SAVE FIX ---
-                # 7. Get the original 4-CHANNEL (BGRA) image from the cache
                 template_img_to_save = template_cache.get(tpl_name)
-                
                 if template_img_to_save is not None:
                     output_file_path = level_output_dir / tpl_name
-                    # 8. Save the 4-channel image, preserving transparency
                     cv2.imwrite(str(output_file_path), template_img_to_save)
-                # --- END: SAVE FIX ---
         else:
             print(f"\n❌ Level: {level_name} (0 segments found)")
 
