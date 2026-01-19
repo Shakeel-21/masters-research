@@ -8,7 +8,7 @@ SEGMENT_PATH = Path("output_segments/core3")
 ORIGINAL_PATH = Path("demo/imgs/test")
 BLOCKS_PATH = Path("output_segments/core3Remake")
 
-MATCH_THRESHOLD = 1000
+MATCH_THRESHOLD = 0.1
 # NMS_THRESHOLD: Controls how much overlap is allowed. 
 # 0.3 means if two boxes overlap by more than 30%, the one with the lower score is deleted.
 NMS_OVERLAP_THRESHOLD = 0.3 
@@ -60,7 +60,7 @@ def main():
             
             try:
                 # Match
-                result = cv2.matchTemplate(level_img, template_bgr, cv2.TM_SQDIFF, mask=mask)
+                result = cv2.matchTemplate(level_img, template_bgr, cv2.TM_SQDIFF_NORMED, mask=mask)
                 min_val, _max_val, min_loc, _max_loc = cv2.minMaxLoc(result)
                 
                 # Check threshold
@@ -70,7 +70,7 @@ def main():
                     
                     # A. Calculate Base Quality (0.0 to 1.0)
                     # 1.0 is a perfect pixel match, 0.0 is barely passing the threshold
-                    match_quality = 1.0 - (min_val / MATCH_THRESHOLD)
+                    match_quality = 1.0 - min_val
                     
                     # B. Get the Area (Size) of the template
                     h, w = template_bgr.shape[:2]
