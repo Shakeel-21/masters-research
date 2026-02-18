@@ -158,11 +158,15 @@ class LevelReconstructor:
             # Identify where Reconstructor thinks it is "B"
         is_claimed_b = (id_grid == "B")
 
-        # CONFLICT: Source is occupied, but Reconstructor says B
-        conflict_mask = is_occupied_source & is_claimed_b
+        raw_conflict = is_occupied_source & is_claimed_b
 
-        # Mark conflicts as "UNKNOWN" so we don't learn bad rules from them
-        id_grid[conflict_mask] = "UNKNOWN"
+        kernel = np.ones((5, 5), np.uint8)
+
+        significant_conflict = cv2.morphologyEx(raw_conflict.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+
+        significant_conflict = significant_conflict.astype(bool)
+
+        id_grid[significant_conflict] = "UNKNOWN"
 
         output_file_path = self.output_path / f"{level_stem}_reconstructed.png"
         cv2.imwrite(str(output_file_path), blank_grid)
@@ -177,7 +181,7 @@ class LevelReconstructor:
         from being registered as a side neighbor.
         """
         TOLERANCE = 12   # How far out to scan
-        EDGE_INSET = 6   # How many pixels to ignore at the corners of the scan
+        EDGE_INSET = 2   # How many pixels to ignore at the corners of the scan
         
         # Helper to get unique IDs, filtering out 'B' if other things exist
         def get_smart_neighbors(r_start, r_end, c_start, c_end):
@@ -196,6 +200,7 @@ class LevelReconstructor:
 
             if "UNKNOWN" in unique_vals:
                 return []
+            
 
             non_background = [v for v in unique_vals if v != "B"]
             
