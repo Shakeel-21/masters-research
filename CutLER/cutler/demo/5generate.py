@@ -6,13 +6,15 @@ import json
 import numpy as np
 from PIL import Image
 
-BASE_DIR = "Generation\\mario2t test"
-TILES_DIR = os.path.join(BASE_DIR, "mario_2t")
+BASE_DIR = "Generation\\mario9 test"
+TILES_DIR = os.path.join(BASE_DIR, "mario_9")
 RULES_FILE = os.path.join(TILES_DIR, "adjacency_rules.txt")
-OUTPUT_PATH = os.path.join(BASE_DIR, "12.png")
+OUTPUT_PATH = os.path.join(BASE_DIR, "22.png")
 
-GRID_WIDTH = 100
-GRID_HEIGHT = 12
+SKY_WEIGHT = 50
+
+GRID_WIDTH = 12
+GRID_HEIGHT = 7
 TIMEOUT = 5
 
 def load_data():
@@ -84,8 +86,8 @@ def inject_background_rules(adjacencies):
     # 1. Allow B to connect to B (Background acts like air)
     # Give it a high weight so large empty spaces are encouraged
     for d in ["top", "bottom", "left", "right"]:
-        if ["B", 1000] not in adjacencies["B"][d]:
-             adjacencies["B"][d].append(["B", 1000])
+        if ["B", SKY_WEIGHT] not in adjacencies["B"][d]:
+             adjacencies["B"][d].append(["B", SKY_WEIGHT])
 
     for d in ["top", "bottom", "left", "right"]:
         if ["P", 10] not in adjacencies["B"][d]:
@@ -415,6 +417,8 @@ def generate_level(height, width, adjacencies, tile_sizes, timeout):
     # Prepare global data
     all_tiles = get_all_tile_names(adjacencies)
     ratios = calculate_global_ratios(adjacencies)
+    print(ratios)
+    
     
     def check_timeout(start_t, current_grid):
         if time.time() - start_t > timeout:

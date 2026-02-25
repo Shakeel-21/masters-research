@@ -300,13 +300,13 @@ class LevelReconstructor:
 
 if __name__ == "__main__":
     reconstructor = LevelReconstructor(
-        segment_path="Generation/mario2t test",
+        segment_path="output_segments/TestNorm05",
         level_path="demo/imgs/test",
-        output_path="Generation/mario2t test",
+        output_path="Generation/all",
         match_threshold=0.05
     )
     
     reconstructor.run_reconstruction(
         unmatched_output_path="output_segments/unmatched",
-        rules_output_path= "Generation/mario2t test/adjacency_rules.txt" # <--- Output file
+        rules_output_path= "Generation/all/adjacency_rules.txt" # <--- Output file
     )
