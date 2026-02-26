@@ -9,12 +9,12 @@ from PIL import Image
 BASE_DIR = "Generation\\mario9 test"
 TILES_DIR = os.path.join(BASE_DIR, "mario_9")
 RULES_FILE = os.path.join(TILES_DIR, "adjacency_rules.txt")
-OUTPUT_PATH = os.path.join(BASE_DIR, "22.png")
+OUTPUT_PATH = os.path.join(BASE_DIR, "local16.png")
 
-SKY_WEIGHT = 50
+SKY_WEIGHT = 800
 
-GRID_WIDTH = 12
-GRID_HEIGHT = 7
+GRID_WIDTH = 230
+GRID_HEIGHT = 14
 TIMEOUT = 5
 
 def load_data():
@@ -213,12 +213,10 @@ def get_min_entropy_cell(grid, adjacencies):
 
                 entropy = len(grid[y][x])
                 
-                if 1 < entropy < min_entropy:
+                if 0 < entropy < min_entropy:
                     min_entropy = entropy
                     min_cells = [(y, x)]
                 elif entropy == min_entropy:
-                    min_cells.append((y, x))
-                elif entropy == 1:
                     min_cells.append((y, x))
     
     if min_cells:
@@ -231,65 +229,98 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios):
     if not possible_tiles:
         return None
 
-    weights = []
-
+    # 1. Count existing tiles and track progress
     current_counts = {t: 0 for t in ratios.keys()}
+    collapsed_count = 0
+    
     for row in grid:
         for cell in row:
             if isinstance(cell, str) and cell in current_counts:
                 current_counts[cell] += 1
+                collapsed_count += 1
     
     total_grid_cells = len(grid) * len(grid[0])
+    total_ratio_sum = sum(ratios.values())
+    if total_ratio_sum == 0: total_ratio_sum = 1
+
+    weights = []
 
     for tile in possible_tiles:
-        # Default weight if not found
-        tile_ratio = ratios.get(tile, 1)
-
-        total_ratio_sum = sum(ratios.values())
-        if total_ratio_sum == 0: total_ratio_sum = 1
+        local_w = ratios.get(tile, 1.0) 
         
-        desired_count = (tile_ratio / total_ratio_sum) * total_grid_cells
-        
-        if current_counts.get(tile, 0) < desired_count:
-            weights.append(tile_ratio)
-        else:
-            weights.append(0.01) 
-    
-
-    if sum(weights) == 0:
-        weights = [1] * len(weights)
-
-    # Normalize
-    total_weight = sum(weights)
-    weights = [w / total_weight for w in weights]
-    
-    is_above_padding = (y + 1 == len(grid) - 1)
-    
-
-    if is_above_padding:
-        weights = []
-        for tile in possible_tiles:
-            valid_bottoms = adjacencies[tile]["bottom"]
-            p_weight = next((item[1] for item in valid_bottoms if item[0] == "P"), 0)
+        if y + 1 < len(grid) and isinstance(grid[y+1][x], str):
+            allowed = adjacencies.get(tile, {}).get("bottom", [])
+            local_w *= next((w for n, w in allowed if n == grid[y+1][x]), 0.0)
             
-            if p_weight > 0:
-                weights.append(p_weight)
+        if y - 1 >= 0 and isinstance(grid[y-1][x], str):
+            allowed = adjacencies.get(tile, {}).get("top", [])
+            local_w *= next((w for n, w in allowed if n == grid[y-1][x]), 0.0)
+
+        if x - 1 >= 0 and isinstance(grid[y][x-1], str):
+            allowed = adjacencies.get(tile, {}).get("left", [])
+            local_w *= next((w for n, w in allowed if n == grid[y][x-1]), 0.0)
+            
+        if x + 1 < len(grid[0]) and isinstance(grid[y][x+1], str):
+            allowed = adjacencies.get(tile, {}).get("right", [])
+            local_w *= next((w for n, w in allowed if n == grid[y][x+1]), 0.0)
+
+        # --- B. IS THIS TERRAIN OR A FINISHER? ---
+        valid_bottoms = [n[0] for n in adjacencies.get(tile, {}).get("bottom", [])]
+        is_structural = (tile == "B") or ("P" in valid_bottoms)
+
+        valid_tops = [n[0] for n in adjacencies.get(tile, {}).get("top", [])]
+        is_finisher = "B" in valid_tops
+
+        # --- C. VERTICAL CHAIN BREAKER ---
+        if not is_structural and y + 1 < len(grid) and grid[y+1][x] == tile:
+            chain_length = 0
+            cy = y + 1
+            while cy < len(grid) and grid[cy][x] == tile:
+                chain_length += 1
+                cy += 1
+
+            local_w *= (0.2 ** chain_length)
+        
+        # --- D. DYNAMIC PACING ---
+        pacing_multiplier = 1.0
+        is_open_space = "B" in possible_tiles
+
+        if not is_structural:
+            if is_finisher and not is_open_space:
+                pacing_multiplier = 1.0 # Escape Hatch for Pipe Tops
             else:
-                weights.append(0) 
+                base_weight = ratios.get(tile, 1)
+                target_ratio = base_weight / total_ratio_sum
+                desired_total_count = target_ratio * total_grid_cells
+                actual_count = current_counts.get(tile, 0)
+                
+                if actual_count >= desired_total_count:
+                    pacing_multiplier = 0.0001 # Hard stop for pipes/decorations
+                else:
+                    progress_ratio = collapsed_count / total_grid_cells
+                    ideal_current_count = desired_total_count * progress_ratio
+                    deficit = ideal_current_count - actual_count
+                    
+                    if deficit < 0:
+                        pacing_multiplier = math.exp(deficit * 2) # Harsh brake
+                    else:
+                        pacing_multiplier = 1.0 + deficit # Gentle boost
 
-        total_weight = sum(weights)
-        if total_weight > 0:
-            weights = [w / total_weight for w in weights]
-        else:
-            weights = [1.0 / len(possible_tiles)] * len(possible_tiles)
+        final_weight = local_w * pacing_multiplier
+        weights.append(max(0.0001, final_weight))
 
-    if not possible_tiles: return None
-    
+    # Normalize Weights
+    total_weight = sum(weights)
+    if total_weight > 0:
+        weights = [w / total_weight for w in weights]
+    else:
+        weights = [1.0 / len(possible_tiles)] * len(possible_tiles)
+
+    # Collapse
     chosen_tile = random.choices(possible_tiles, weights=weights, k=1)[0]
-
     height, width = tile_sizes.get(chosen_tile, (1, 1))
-    
 
+    # Check bounds and free area for multi-cell tiles
     if (y + height > len(grid)) or (x + width > len(grid[0])):        
         return None
 
@@ -316,12 +347,14 @@ def propagate(grid, y, x, adjacencies, tile_sizes):
     stack = [(y, x)]
     while stack:
         cy, cx = stack.pop()
-
-        if isinstance(grid[cy][cx], set):
-            continue
+        cell_contents = grid[cy][cx]
+        
+        if isinstance(cell_contents, str):
+            height, width = tile_sizes.get(cell_contents, (1, 1))
+        else:
+            height, width = 1, 1
             
-        tile = grid[cy][cx]
-        height, width = tile_sizes.get(tile, (1, 1))
+        
         
         # Define bounds of the current tile placement
         y_min = cy - height + 1
@@ -340,34 +373,54 @@ def propagate(grid, y, x, adjacencies, tile_sizes):
                 # Bounds check
                 if 0 <= ny < len(grid) and 0 <= nx < len(grid[0]):
                     if isinstance(grid[ny][nx], set):
-                        updated = update_cell(grid, ny, nx, cy, cx, y_top, y_bottom, x_left, x_right, adjacencies)
-                        if updated:
-                            stack.append((ny, nx))
+                        direction = get_direction(ny, nx, y_top, y_bottom, x_left, x_right)
+                        if direction is not None:
+                            updated = update_cell(grid, ny, nx, cy, cx, direction, adjacencies)
+                            if updated:
+                                stack.append((ny, nx))
 
-def update_cell(grid, y, x, prev_y, prev_x, y_top, y_bottom, x_left, x_right, adjacencies):
-    original_len = len(grid[y][x])
-    direction = get_direction(y, x, y_top, y_bottom, x_left, x_right)
-    
-    if direction is None: return False
+def update_cell(grid, target_y, target_x, source_y, source_x, direction, adjacencies):
+    original_len = len(grid[target_y][target_x])
+    source_contents = grid[source_y][source_x]
 
-    prev_tile = grid[prev_y][prev_x] 
-    
-    to_remove = set()
-    for potential_tile in grid[y][x]:
+    if isinstance(source_contents, str):
+        possible_sources = [source_contents]
+    else:
+        possible_sources = list(source_contents)
         
-        if not is_valid_neighbor(prev_tile, potential_tile, direction, adjacencies):
+    to_remove = set()
+
+    for potential_tile in grid[target_y][target_x]:
+        has_support = False
+        
+        # Does AT LEAST ONE of the possible source tiles allow this potential tile?
+        for src_tile in possible_sources:
+            if is_valid_neighbor(src_tile, potential_tile, direction, adjacencies):
+                has_support = True
+                break
+
+        if not has_support:
             to_remove.add(potential_tile)
-    
+
     if to_remove:
-        grid[y][x] -= to_remove
-        return len(grid[y][x]) < original_len
+        grid[target_y][target_x] -= to_remove
+        return len(grid[target_y][target_x]) < original_len
+        
     return False
 
 def get_direction(y, x, y_top, y_bottom, x_left, x_right):
-    if y < y_top: return 0    # Target is above the block
-    if y > y_bottom: return 1 # Target is below the block
-    if x < x_left: return 2   # Target is left of the block
-    if x > x_right: return 3  # Target is right of the block
+    # Check if the target is outside the bounds on BOTH axes (meaning it's a diagonal corner)
+    is_vertical_out = y < y_top or y > y_bottom
+    is_horizontal_out = x < x_left or x > x_right
+    
+    if is_vertical_out and is_horizontal_out:
+        return None 
+        
+    if y < y_top: return 0    # Target is directly above the block
+    if y > y_bottom: return 1 # Target is directly below the block
+    if x < x_left: return 2   # Target is directly left of the block
+    if x > x_right: return 3  # Target is directly right of the block
+    
     return None
 
 def is_valid_neighbor(source_tile, target_tile, direction_idx, adjacencies):
@@ -417,7 +470,7 @@ def generate_level(height, width, adjacencies, tile_sizes, timeout):
     # Prepare global data
     all_tiles = get_all_tile_names(adjacencies)
     ratios = calculate_global_ratios(adjacencies)
-    print(ratios)
+    # print(ratios)
     
     
     def check_timeout(start_t, current_grid):
@@ -487,9 +540,9 @@ def generate_level(height, width, adjacencies, tile_sizes, timeout):
             continue
             
         except TimeoutException as e:
-            print(f"Attempt {attempts} timed out ({timeout}s).")
-            print("State at timeout:")
-            debug_display(e.grid)
+            # print(f"Attempt {attempts} timed out ({timeout}s).")
+            # print("State at timeout:")
+            # debug_display(e.grid)
             continue
 
 def render_grid(grid, images, cell_size):
