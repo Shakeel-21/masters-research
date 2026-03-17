@@ -25,6 +25,11 @@ class LevelReconstructor:
         # --- Global Rule Dictionary ---
         self.adjacency_rules = defaultdict(lambda: {"top": Counter(), "bottom": Counter(), "left": Counter(), "right": Counter()})
 
+        self.tile_frequencies = defaultdict(float)
+        self.template_padding = {} 
+        self.cell_w = 0
+        self.cell_h = 0
+
         self.output_path.mkdir(parents=True, exist_ok=True)
 
     def _load_source_levels(self):
@@ -168,6 +173,18 @@ class LevelReconstructor:
 
         id_grid[significant_conflict] = "UNKNOWN"
 
+        if self.cell_w > 0 and self.cell_h > 0:
+            cell_area = self.cell_w * self.cell_h
+
+            unique_ids, pixel_counts = np.unique(id_grid, return_counts=True)
+            
+            for tile_id, p_count in zip(unique_ids, pixel_counts):
+                if tile_id == "UNKNOWN": continue
+                
+                # Convert raw pixels into WFC grid units 
+                # (e.g. 1600 'B' pixels / 256 cell area = 6.25 'B' tiles)
+                self.tile_frequencies[tile_id] += (p_count / cell_area)
+
         output_file_path = self.output_path / f"{level_stem}_reconstructed.png"
         cv2.imwrite(str(output_file_path), blank_grid)
         
@@ -269,7 +286,15 @@ class LevelReconstructor:
             json.dump(serializable_rules, f, indent=4)
         print(f"\nAdjacency rules saved to {filepath}")
 
-    def run_reconstruction(self, unmatched_output_path=None, rules_output_path=None):
+    def save_frequencies(self, filepath):
+        # Round the floats to make the JSON cleaner
+        clean_frequencies = {k: round(v, 2) for k, v in self.tile_frequencies.items()}
+        
+        with open(filepath, 'w') as f:
+            json.dump(clean_frequencies, f, indent=4)
+        print(f"Tile frequencies saved to {filepath}")
+
+    def run_reconstruction(self, unmatched_output_path=None, rules_output_path=None, freq_output_path=None):
         self._load_source_levels()
 
         if not self.source_image_cache:
@@ -285,9 +310,13 @@ class LevelReconstructor:
             
             # 2. Skip if no folder/segments found
             if not self.template_cache:
-                # Optional: print a message so you know it was skipped
-                # print(f"Skipping {level_stem}: No matching segment folder found.")
                 continue
+
+            if self.cell_w == 0:
+                valid_t = [t for t in self.template_cache.values() if t['is_valid']]
+                if valid_t:
+                    self.cell_w = min(t['w'] for t in valid_t)
+                    self.cell_h = min(t['h'] for t in valid_t)
 
             # 3. Reset unmatched tracking for this level
             self.unmatched_templates = set(self.template_cache.keys())
@@ -298,15 +327,19 @@ class LevelReconstructor:
         if rules_output_path:
             self.save_adjacency_rules(rules_output_path)
 
+        if freq_output_path:
+            self.save_frequencies(freq_output_path)
+
 if __name__ == "__main__":
     reconstructor = LevelReconstructor(
-        segment_path="output_segments/TestNorm05",
+        segment_path="Generation/smb41 ratios",
         level_path="demo/imgs/test",
-        output_path="Generation/all",
+        output_path="Generation/smb41 ratios",
         match_threshold=0.05
     )
     
     reconstructor.run_reconstruction(
         unmatched_output_path="output_segments/unmatched",
-        rules_output_path= "Generation/all/adjacency_rules.txt" # <--- Output file
+        rules_output_path= "Generation/smb41 ratios/SuperMarioBros2(J)-World4-1/adjacency_rules.txt" ,
+        freq_output_path="Generation/smb41 ratios/SuperMarioBros2(J)-World4-1/ratios.json"
     )

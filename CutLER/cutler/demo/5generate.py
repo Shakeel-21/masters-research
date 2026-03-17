@@ -3,39 +3,42 @@ import time
 import math
 import os
 import json
+import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-BASE_DIR = "Generation\\mario9 test"
-TILES_DIR = os.path.join(BASE_DIR, "mario_9")
-RULES_FILE = os.path.join(TILES_DIR, "adjacency_rules.txt")
-OUTPUT_PATH = os.path.join(BASE_DIR, "local16.png")
+BASE_DIR = "Generation\\mario1t ratios\\mario_1t"
+TILES_DIR = BASE_DIR
+RULES_FILE = os.path.join(BASE_DIR, "adjacency_rules.txt") # Assuming learner saved it here
+RATIOS_FILE = os.path.join(BASE_DIR, "ratios.json")        # <--- New ratios file
 
-SKY_WEIGHT = 800
+OUTPUT_PATH = os.path.join(BASE_DIR, "..", "graph1.png")
 
 GRID_WIDTH = 230
 GRID_HEIGHT = 14
 TIMEOUT = 5
 
 def load_data():
-    """Loads images, calculates tile sizes (in grid units), and loads rules."""
-    print("Loading tiles and rules...")
+    """Loads images, calculates tile sizes (in grid units), loads rules and ratios."""
+    print("Loading tiles, rules, and global ratios...")
 
     with open(RULES_FILE, 'r') as f:
         adjacencies = json.load(f)
+        
+    with open(RATIOS_FILE, 'r') as f:
+        ratios = json.load(f) # <--- Load your perfect global ratios
     
-    adjacencies = inject_background_rules(adjacencies)
+    adjacencies = inject_background_rules(adjacencies, ratios)
 
     images = {}
     tile_sizes = {} 
     
-
     valid_extensions = {".png"}
     found_files = [f for f in os.listdir(TILES_DIR) 
                    if os.path.splitext(f)[1].lower() in valid_extensions]
     
     if not found_files:
-        raise FileNotFoundError("No images found in core3 folder!")
+        raise FileNotFoundError(f"No images found in {TILES_DIR}!")
 
     temp_dims = []
     for fname in found_files:
@@ -44,7 +47,6 @@ def load_data():
         images[fname] = img
         temp_dims.append(img.size) 
     
-
     min_w = min(d[0] for d in temp_dims)
     min_h = min(d[1] for d in temp_dims)
     CELL_SIZE = (min_w, min_h) 
@@ -55,134 +57,57 @@ def load_data():
         h_units = img.height // CELL_SIZE[1]
         tile_sizes[fname] = (h_units, w_units) 
 
-
     for special in ["B", "P"]:
         tile_sizes[special] = (1, 1)
 
-    return adjacencies, images, tile_sizes, CELL_SIZE
+    return adjacencies, ratios, images, tile_sizes, CELL_SIZE # <--- Return ratios
+
 # Direction Mapping: 0:Top, 1:Bottom, 2:Left, 3:Right
 DIR_MAP = {0: "top", 1: "bottom", 2: "left", 3: "right"}
 
 def get_all_tile_names(adjacencies):
-    """Extracts all valid tile names, explicitly adding 'B'."""
     keys = list(adjacencies.keys())
     if "B" not in keys:
         keys.append("B")
     return [k for k in keys if k != "P"]
 
-def inject_background_rules(adjacencies):
-    """
-    If 'B' is not a key in adjacencies, create it by inverting 
-    the rules of all other tiles that point to 'B'.
-    """
+def inject_background_rules(adjacencies, ratios):
     if "B" not in adjacencies:
-        adjacencies["B"] = {
-            "top": [], "bottom": [], "left": [], "right": []
-        }
+        adjacencies["B"] = { "top": [], "bottom": [], "left": [], "right": [] }
 
-    # standard inverse mapping
     inverse_dir = {"top": "bottom", "bottom": "top", "left": "right", "right": "left"}
+    
+    # Grab the true massive sky weight from your JSON!
+    sky_weight = ratios.get("B", 1000)
 
-    # 1. Allow B to connect to B (Background acts like air)
-    # Give it a high weight so large empty spaces are encouraged
+    # 1. B naturally connects to B and Padding with massive momentum
     for d in ["top", "bottom", "left", "right"]:
-        if ["B", SKY_WEIGHT] not in adjacencies["B"][d]:
-             adjacencies["B"][d].append(["B", SKY_WEIGHT])
+        if ["B", sky_weight] not in adjacencies["B"][d]:
+             adjacencies["B"][d].append(["B", sky_weight])
+        if ["P", sky_weight] not in adjacencies["B"][d]:
+             adjacencies["B"][d].append(["P", sky_weight])
 
-    for d in ["top", "bottom", "left", "right"]:
-        if ["P", 10] not in adjacencies["B"][d]:
-             adjacencies["B"][d].append(["P", 10])
-
-    # 2. Scan all other tiles to see who connects to B
+    # 2. Ensure B creates perfect inverse rules for everything
     for tile_name, rules in adjacencies.items():
         if tile_name == "B": continue
-        
         for direction, neighbors in rules.items():
-            # Check if this tile connects to B in this direction
-            # e.g. tile_01["top"] contains "B"
-            for neighbor_data in neighbors:
-                n_name, n_weight = neighbor_data
-                
+            for n_name, n_weight in neighbors:
                 if n_name == "B":
-                    # If tile_01 has B on TOP, then B has tile_01 on BOTTOM
                     inv_d = inverse_dir[direction]
-                    
-                    # Add tile_01 to B's allowed neighbors
-                    # We reuse the weight defined in the tile
-                    if [tile_name, n_weight] not in adjacencies["B"][inv_d]:
+                    # Only inject if the learner didn't already find it
+                    if not any(n[0] == tile_name for n in adjacencies["B"][inv_d]):
                         adjacencies["B"][inv_d].append([tile_name, n_weight])
     
     print("Injected rules for 'B' (Background).")
     return adjacencies
 
-def calculate_global_ratios(adjacencies):
-    """
-    Calculates the global frequency/weight of each tile based on 
-    how often it appears in the adjacency rules.
-    """
-    counts = {}
-    for tile, directions in adjacencies.items():
-        if tile not in counts: counts[tile] = 0
-        # Summing the weights found in the adjacency lists
-        for direction in directions.values():
-            for neighbor_data in direction:
-                # format is [name, weight]
-                n_name, n_weight = neighbor_data
-                if n_name not in counts: counts[n_name] = 0
-                counts[n_name] += n_weight
-    return counts
 
-def valid_check(grid, adjacencies):
-    for y in range(len(grid) - 1): 
-        for x in range(len(grid[0])):
-            tile = grid[y][x]
-
-            if not isinstance(tile, str): 
-                continue
-
-            up = down = left = right = -1
-            
-            # Check Down
-            if y + 1 < len(grid):
-                down = grid[y+1][x]
-                if down == tile: down = -1 
-                if down == tile and isinstance(down, str): down = -1
-
-            # Check Up
-            if y - 1 >= 0:
-                up = grid[y-1][x]
-                if up == tile: up = -1
-            
-            # Check Left
-            if x - 1 >= 0:
-                left = grid[y][x-1]
-                if left == tile: left = -1
-
-            # Check Right
-            if x + 1 < len(grid[0]):
-                right = grid[y][x+1]
-                if right == tile: right = -1
-        
-            neighbors = [up, down, right, left] 
-            check_dirs = [up, down, left, right] 
-            
-            for direction_idx in range(4):
-                neighbor_tile = check_dirs[direction_idx]
-
-                if isinstance(neighbor_tile, str):   
-                    if not is_valid_neighbor(neighbor_tile, tile, direction_idx, adjacencies):
-                        print(f"{tile} is not allowed in direction {direction_idx} of {neighbor_tile}")
-                        
-                        
-                        collapse_cell(grid, y, x, adjacencies, tile_sizes={}, ratios={}) 
 
 def initialize_grid(height, width, all_tiles):
-    # Initialize with a set of ALL valid tile names
     return [[set(all_tiles) for _ in range(width)] for _ in range(height)]
 
 def pad_grid(grid, pad_value="P"):
     width = len(grid[0])
-    # The padding row is fixed strings, not sets
     new_row = [pad_value] * width
     grid.append(new_row)
     return grid
@@ -191,7 +116,6 @@ def get_min_entropy_cell(grid, adjacencies):
     min_entropy = float('inf')
     min_cells = []
     
-    # Iterate excluding the padding row
     for y in range(len(grid) - 2, -1, -1):
         for x in range(len(grid[0])):
             if len(grid[y][x]) == 0:
@@ -207,7 +131,6 @@ def get_min_entropy_cell(grid, adjacencies):
                             filtered.add(t)
                     grid[y][x] = filtered
                     
-
                     if len(grid[y][x]) == 0:
                         return (-1, -1)
 
@@ -224,104 +147,110 @@ def get_min_entropy_cell(grid, adjacencies):
     
     return None
 
-def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios):
+def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
     possible_tiles = list(grid[y][x])    
-    if not possible_tiles:
-        return None
+    if not possible_tiles: return None
 
-    # 1. Count existing tiles and track progress
     current_counts = {t: 0 for t in ratios.keys()}
-    collapsed_count = 0
-    
+    collapsed_count = 0   
     for row in grid:
         for cell in row:
             if isinstance(cell, str) and cell in current_counts:
                 current_counts[cell] += 1
-                collapsed_count += 1
-    
+                collapsed_count += 1   
+
     total_grid_cells = len(grid) * len(grid[0])
     total_ratio_sum = sum(ratios.values())
     if total_ratio_sum == 0: total_ratio_sum = 1
 
+    progress_ratio = collapsed_count / total_grid_cells
+    for t in ratios.keys():
+        target_ratio = ratios.get(t, 1.0) / total_ratio_sum
+        desired_total = target_ratio * total_grid_cells
+        ideal_current = desired_total * progress_ratio
+        
+        history[t]['actual'].append(current_counts.get(t, 0))
+        history[t]['ideal'].append(ideal_current)
+    
+    steps.append(collapsed_count)
+
     weights = []
 
     for tile in possible_tiles:
-        local_w = ratios.get(tile, 1.0) 
-        
-        if y + 1 < len(grid) and isinstance(grid[y+1][x], str):
-            allowed = adjacencies.get(tile, {}).get("bottom", [])
-            local_w *= next((w for n, w in allowed if n == grid[y+1][x]), 0.0)
-            
-        if y - 1 >= 0 and isinstance(grid[y-1][x], str):
-            allowed = adjacencies.get(tile, {}).get("top", [])
-            local_w *= next((w for n, w in allowed if n == grid[y-1][x]), 0.0)
+        directional_probs = []
+        is_illegal = False
 
-        if x - 1 >= 0 and isinstance(grid[y][x-1], str):
-            allowed = adjacencies.get(tile, {}).get("left", [])
-            local_w *= next((w for n, w in allowed if n == grid[y][x-1]), 0.0)
-            
-        if x + 1 < len(grid[0]) and isinstance(grid[y][x+1], str):
-            allowed = adjacencies.get(tile, {}).get("right", [])
-            local_w *= next((w for n, w in allowed if n == grid[y][x+1]), 0.0)
+        for dy, dx, d_key in [(-1,0,"top"), (1,0,"bottom"), (0,-1,"left"), (0,1,"right")]:
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < len(grid) and 0 <= nx < len(grid[0]):
+                if isinstance(grid[ny][nx], str):
+                    allowed = adjacencies.get(tile, {}).get(d_key, [])
+                    n_weight = next((w for n, w in allowed if n == grid[ny][nx]), 0.0)
 
-        # --- B. IS THIS TERRAIN OR A FINISHER? ---
+                    if n_weight <= 0.0:
+                        is_illegal = True
+                        break
+
+                    total_allowed_weight = sum(w for n, w in allowed)
+                    prob = n_weight / total_allowed_weight if total_allowed_weight > 0 else 0
+                    directional_probs.append(prob)
+
+        if is_illegal:
+            weights.append(0.0)
+            continue
+
+        if directional_probs:
+            local_w = sum(directional_probs) / len(directional_probs)
+        else:
+            local_w = ratios.get(tile, 1.0) / total_ratio_sum
+
         valid_bottoms = [n[0] for n in adjacencies.get(tile, {}).get("bottom", [])]
         is_structural = (tile == "B") or ("P" in valid_bottoms)
 
         valid_tops = [n[0] for n in adjacencies.get(tile, {}).get("top", [])]
         is_finisher = "B" in valid_tops
 
-        # --- C. VERTICAL CHAIN BREAKER ---
-        if not is_structural and y + 1 < len(grid) and grid[y+1][x] == tile:
-            chain_length = 0
-            cy = y + 1
-            while cy < len(grid) and grid[cy][x] == tile:
-                chain_length += 1
-                cy += 1
-
-            local_w *= (0.2 ** chain_length)
-        
-        # --- D. DYNAMIC PACING ---
         pacing_multiplier = 1.0
         is_open_space = "B" in possible_tiles
+        
+        base_weight = ratios.get(tile, 1.0) 
 
         if not is_structural:
             if is_finisher and not is_open_space:
-                pacing_multiplier = 1.0 # Escape Hatch for Pipe Tops
+                pacing_multiplier = 1.0 
             else:
-                base_weight = ratios.get(tile, 1)
                 target_ratio = base_weight / total_ratio_sum
                 desired_total_count = target_ratio * total_grid_cells
                 actual_count = current_counts.get(tile, 0)
                 
                 if actual_count >= desired_total_count:
-                    pacing_multiplier = 0.0001 # Hard stop for pipes/decorations
+                    pacing_multiplier = 0.0001 
                 else:
                     progress_ratio = collapsed_count / total_grid_cells
                     ideal_current_count = desired_total_count * progress_ratio
                     deficit = ideal_current_count - actual_count
                     
                     if deficit < 0:
-                        pacing_multiplier = math.exp(deficit * 2) # Harsh brake
+                        pacing_multiplier = math.exp(deficit * 2) 
                     else:
-                        pacing_multiplier = 1.0 + deficit # Gentle boost
+                        pacing_multiplier = 1.0 + deficit 
 
-        final_weight = local_w * pacing_multiplier
-        weights.append(max(0.0001, final_weight))
+        final_weight = local_w  * pacing_multiplier
+        weights.append(final_weight)
 
-    # Normalize Weights
     total_weight = sum(weights)
     if total_weight > 0:
         weights = [w / total_weight for w in weights]
     else:
+        if "B" in possible_tiles:
+            return "B"
         weights = [1.0 / len(possible_tiles)] * len(possible_tiles)
 
-    # Collapse
+
     chosen_tile = random.choices(possible_tiles, weights=weights, k=1)[0]
     height, width = tile_sizes.get(chosen_tile, (1, 1))
 
-    # Check bounds and free area for multi-cell tiles
-    if (y + height > len(grid)) or (x + width > len(grid[0])):        
+    if (y - height + 1 < 0) or (x + width > len(grid[0])):      
         return None
 
     area_free = True
@@ -333,14 +262,14 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios):
             if not isinstance(grid[y - dy][x + dx], set):
                 area_free = False
                 break
-        if not area_free: break
-        
+        if not area_free: break       
+
     if area_free:
         for dy in range(height):
             for dx in range(width):
                 grid[y-dy][x+dx] = chosen_tile
-        return chosen_tile
-    
+        return chosen_tile   
+
     return None
 
 def propagate(grid, y, x, adjacencies, tile_sizes):
@@ -354,23 +283,17 @@ def propagate(grid, y, x, adjacencies, tile_sizes):
         else:
             height, width = 1, 1
             
-        
-        
-        # Define bounds of the current tile placement
         y_min = cy - height + 1
         y_max = cy     
         y_bottom = cy
         y_top = cy - height + 1
         x_left = cx
         x_right = cx + width - 1
-
         
         for dy in range(-1, height + 1):
             for dx in range(-1, width + 1):
-                
                 ny, nx = cy - dy, cx + dx 
                 
-                # Bounds check
                 if 0 <= ny < len(grid) and 0 <= nx < len(grid[0]):
                     if isinstance(grid[ny][nx], set):
                         direction = get_direction(ny, nx, y_top, y_bottom, x_left, x_right)
@@ -393,7 +316,6 @@ def update_cell(grid, target_y, target_x, source_y, source_x, direction, adjacen
     for potential_tile in grid[target_y][target_x]:
         has_support = False
         
-        # Does AT LEAST ONE of the possible source tiles allow this potential tile?
         for src_tile in possible_sources:
             if is_valid_neighbor(src_tile, potential_tile, direction, adjacencies):
                 has_support = True
@@ -409,39 +331,30 @@ def update_cell(grid, target_y, target_x, source_y, source_x, direction, adjacen
     return False
 
 def get_direction(y, x, y_top, y_bottom, x_left, x_right):
-    # Check if the target is outside the bounds on BOTH axes (meaning it's a diagonal corner)
     is_vertical_out = y < y_top or y > y_bottom
     is_horizontal_out = x < x_left or x > x_right
     
     if is_vertical_out and is_horizontal_out:
         return None 
         
-    if y < y_top: return 0    # Target is directly above the block
-    if y > y_bottom: return 1 # Target is directly below the block
-    if x < x_left: return 2   # Target is directly left of the block
-    if x > x_right: return 3  # Target is directly right of the block
+    if y < y_top: return 0    
+    if y > y_bottom: return 1 
+    if x < x_left: return 2   
+    if x > x_right: return 3  
     
     return None
 
 def is_valid_neighbor(source_tile, target_tile, direction_idx, adjacencies):
-    # Convert index to string key
     dir_key = DIR_MAP.get(direction_idx)
     if not dir_key: return False
     
-   
     if source_tile not in adjacencies:
         return False 
 
-    allowed_neighbors = adjacencies[source_tile][dir_key] # List of [name, freq]
-    
-    # Extract just the names
+    allowed_neighbors = adjacencies[source_tile][dir_key] 
     allowed_names = {n[0] for n in allowed_neighbors}
     
     return target_tile in allowed_names
-
-
-
-    
 
 class TimeoutException(Exception):
     def __init__(self, grid):
@@ -459,36 +372,32 @@ def debug_display(grid):
             if isinstance(cell, str):
                 line.append(f"[{cell[-7:-4]:^3}]")
             elif isinstance(cell, set):
-                
                 line.append(f"<{len(cell)} >") 
             else:
                 line.append("[ ? ]")
         print("".join(line))
     print("-------------------------\n")
 
-def generate_level(height, width, adjacencies, tile_sizes, timeout):
-    # Prepare global data
+def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout): 
     all_tiles = get_all_tile_names(adjacencies)
-    ratios = calculate_global_ratios(adjacencies)
-    # print(ratios)
-    
     
     def check_timeout(start_t, current_grid):
         if time.time() - start_t > timeout:
             raise TimeoutException(current_grid)
+            
     def generate_level_attempt(h, w):
             start_time = time.time()
             grid = initialize_grid(h, w, all_tiles)
             grid = pad_grid(grid, pad_value="P")
+            generation_history = {t: {'actual': [], 'ideal': []} for t in ratios.keys()}
+            collapse_steps = []
             
             while True:
                 check_timeout(start_time, grid)
                 
-
                 cell = get_min_entropy_cell(grid, adjacencies)
 
                 if cell == (-1, -1):
-                    # print("Contradiction detected (0 entropy). Restarting...")
                     raise RetryException(grid)
 
                 if cell is None:
@@ -500,19 +409,16 @@ def generate_level(height, width, adjacencies, tile_sizes, timeout):
                 
                 y, x = cell
                 
-                # Skip if already collapsed (string)
                 if isinstance(grid[y][x], str): continue
                     
-                tile = collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios)
+                tile = collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, generation_history, collapse_steps)
                 
                 if tile is not None:
                     propagate(grid, y, x, adjacencies, tile_sizes)
                 else:
-                    # Collapse failed (no valid weighted choice)
                     print(f"Dead end at {y},{x}. Restarting...")
                     raise RetryException(grid)
             
-            # Convert to Final Output
             final_grid = []
             for row in grid:
                 new_row = []
@@ -523,29 +429,70 @@ def generate_level(height, width, adjacencies, tile_sizes, timeout):
                         new_row.append("B") 
                 final_grid.append(new_row)
                 
-            return np.array(final_grid)
+            return np.array(final_grid), generation_history, collapse_steps
 
-    # Main Retry Loop
     attempts = 0
     while True:
         attempts += 1
         try:
-            # print(f"--- Generation Attempt {attempts} ---")
             return generate_level_attempt(height, width)
-            
         except RetryException as e:
-            # Catch the exception 'e', access 'e.grid', and display it
-            # print("Attempt failed. visualizing state:")
-            # debug_display(e.grid)
             continue
-            
         except TimeoutException as e:
-            # print(f"Attempt {attempts} timed out ({timeout}s).")
-            # print("State at timeout:")
-            # debug_display(e.grid)
             continue
 
-def render_grid(grid, images, cell_size):
+def plot_pacing_graphs(history, steps):
+    """
+    Generates a grid of line graphs, one for each tile type,
+    showing how closely the actual count followed the ideal count.
+    """
+    num_tiles = len(history)
+    
+    # Set how many columns you want side-by-side
+    cols = 4 
+    rows = math.ceil(num_tiles / cols)
+    
+    # Make the figure wider, and scale height based on rows
+    fig, axes = plt.subplots(rows, cols, figsize=(16, 3 * rows), sharex=True)
+    
+    # Flatten the 2D axes array into a 1D list so it's easy to loop through
+    # (If there's only 1 row or column, flatten() still makes it a flat list)
+    if num_tiles > 1:
+        axes = axes.flatten()
+    else:
+        axes = [axes]
+        
+    for i, (tile, data) in enumerate(history.items()):
+        ax = axes[i]
+        
+        # Plot the lines
+        ax.plot(steps, data['actual'], label='Actual', color='blue', linewidth=2)
+        ax.plot(steps, data['ideal'], label='Ideal', color='orange', linestyle='--', linewidth=2)
+        
+        # Formatting
+        ax.set_title(f"Tile: '{tile}'")
+        ax.grid(True, alpha=0.3)
+        if i == 0: # Only put the legend on the first graph to save space
+            ax.legend()
+        
+        # Highlight when Actual is over/under ideal
+        ax.fill_between(steps, data['actual'], data['ideal'], 
+                        where=[a < i for a, i in zip(data['actual'], data['ideal'])], 
+                        color='red', alpha=0.1)
+        ax.fill_between(steps, data['actual'], data['ideal'], 
+                        where=[a >= i for a, i in zip(data['actual'], data['ideal'])], 
+                        color='green', alpha=0.1)
+
+    # Hide any extra empty subplots if num_tiles isn't a perfect multiple of cols
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+def render_grid(grid, images, tile_sizes, cell_size): # <--- Add tile_sizes here
     rows = len(grid)
     cols = len(grid[0])
     cw, ch = cell_size
@@ -553,27 +500,20 @@ def render_grid(grid, images, cell_size):
     img_h = rows * ch
     
     canvas = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
-
     covered_cells = set()
 
-    for y in range(rows):
+    for y in range(rows - 1, -1, -1):
         for x in range(cols):
             tile_name = grid[y][x]
 
             if tile_name in ["B", "P"]: continue
             if tile_name not in images: continue
+            
             if (x, y) in covered_cells: continue
 
             img = images[tile_name]
-
-            width_in_cells = math.ceil(img.width / cw)
-            height_in_cells = math.ceil(img.height / ch)
-
-            is_tall_object = height_in_cells > 1
-            has_neighbor_below = (y + 1 < rows) and (grid[y+1][x] == tile_name)
-
-            if is_tall_object and has_neighbor_below:
-                continue
+            
+            height_in_cells, width_in_cells = tile_sizes.get(tile_name, (1, 1))
 
             px = x * cw
             py = (y + 1) * ch - img.height
@@ -593,21 +533,21 @@ def render_grid(grid, images, cell_size):
 
     return canvas
 
-
-
 if __name__ == "__main__":
     try:
-        adj, imgs, sizes, c_size = load_data()
+        # Load ALL data, including the new ratios!
+        adj, ratios, imgs, sizes, c_size = load_data() 
         
         print("Generating grid...")
-        final_grid_data = generate_level(GRID_HEIGHT, GRID_WIDTH, adj, sizes,TIMEOUT)
+        # Pass ratios to generate_level
+        final_grid_data, gen_history, col_steps = generate_level(GRID_HEIGHT, GRID_WIDTH, adj, ratios, sizes, TIMEOUT) 
+        plot_pacing_graphs(gen_history, col_steps)
         
         print("Rendering image...")
-        final_img = render_grid(final_grid_data, imgs, c_size)
+        final_img = render_grid(final_grid_data, imgs, sizes, c_size)
         
         print(f"Saving to {OUTPUT_PATH}...")
         final_img.save(OUTPUT_PATH)
-        debug_display(final_grid_data)
         print("Done!")
         
     except Exception as e:
