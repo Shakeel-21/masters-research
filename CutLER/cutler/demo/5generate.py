@@ -7,15 +7,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-BASE_DIR = "Generation\\mario1t ratios\\mario_1t"
+BASE_DIR = "Generation\\mario1t ratios\\mario_1t_used"
 TILES_DIR = BASE_DIR
 RULES_FILE = os.path.join(BASE_DIR, "adjacency_rules.txt") # Assuming learner saved it here
 RATIOS_FILE = os.path.join(BASE_DIR, "ratios.json")        # <--- New ratios file
 
-OUTPUT_PATH = os.path.join(BASE_DIR, "..", "graph1.png")
+OUTPUT_PATH = os.path.join(BASE_DIR, "..", "new adj1.png")
 
-GRID_WIDTH = 230
-GRID_HEIGHT = 14
+GRID_WIDTH = 230    #230
+GRID_HEIGHT = 14   #14
 TIMEOUT = 5
 
 def load_data():
@@ -78,7 +78,7 @@ def inject_background_rules(adjacencies, ratios):
     inverse_dir = {"top": "bottom", "bottom": "top", "left": "right", "right": "left"}
     
     # Grab the true massive sky weight from your JSON!
-    sky_weight = ratios.get("B", 1000)
+    sky_weight = 1.0
 
     # 1. B naturally connects to B and Padding with massive momentum
     for d in ["top", "bottom", "left", "right"]:
@@ -200,40 +200,34 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
             continue
 
         if directional_probs:
-            local_w = sum(directional_probs) / len(directional_probs)
+            local_w = 1.0
+            for p in directional_probs:
+                local_w *= p
         else:
             local_w = ratios.get(tile, 1.0) / total_ratio_sum
 
         valid_bottoms = [n[0] for n in adjacencies.get(tile, {}).get("bottom", [])]
         is_structural = (tile == "B") or ("P" in valid_bottoms)
 
-        valid_tops = [n[0] for n in adjacencies.get(tile, {}).get("top", [])]
-        is_finisher = "B" in valid_tops
-
         pacing_multiplier = 1.0
-        is_open_space = "B" in possible_tiles
-        
         base_weight = ratios.get(tile, 1.0) 
 
         if not is_structural:
-            if is_finisher and not is_open_space:
-                pacing_multiplier = 1.0 
+            target_ratio = base_weight / total_ratio_sum
+            desired_total_count = target_ratio * total_grid_cells
+            actual_count = current_counts.get(tile, 0)
+            
+            if actual_count >= desired_total_count:
+                pacing_multiplier = 0.0 
             else:
-                target_ratio = base_weight / total_ratio_sum
-                desired_total_count = target_ratio * total_grid_cells
-                actual_count = current_counts.get(tile, 0)
+                progress_ratio = collapsed_count / total_grid_cells
+                ideal_current_count = desired_total_count * progress_ratio
+                deficit = ideal_current_count - actual_count
                 
-                if actual_count >= desired_total_count:
-                    pacing_multiplier = 0.0001 
+                if deficit < 0:
+                    pacing_multiplier = math.exp(deficit * 2) 
                 else:
-                    progress_ratio = collapsed_count / total_grid_cells
-                    ideal_current_count = desired_total_count * progress_ratio
-                    deficit = ideal_current_count - actual_count
-                    
-                    if deficit < 0:
-                        pacing_multiplier = math.exp(deficit * 2) 
-                    else:
-                        pacing_multiplier = 1.0 + deficit 
+                    pacing_multiplier = 1.0 + deficit 
 
         final_weight = local_w  * pacing_multiplier
         weights.append(final_weight)
@@ -365,7 +359,7 @@ class RetryException(Exception):
         self.grid = grid
 
 def debug_display(grid):
-    print("\n--- FAILED GRID STATE ---")
+    print("\n-------------------")
     for row in grid:
         line = []
         for cell in row:
@@ -412,6 +406,7 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
                 if isinstance(grid[y][x], str): continue
                     
                 tile = collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, generation_history, collapse_steps)
+                #debug_display(grid)
                 
                 if tile is not None:
                     propagate(grid, y, x, adjacencies, tile_sizes)
@@ -541,14 +536,16 @@ if __name__ == "__main__":
         print("Generating grid...")
         # Pass ratios to generate_level
         final_grid_data, gen_history, col_steps = generate_level(GRID_HEIGHT, GRID_WIDTH, adj, ratios, sizes, TIMEOUT) 
-        plot_pacing_graphs(gen_history, col_steps)
+        
         
         print("Rendering image...")
         final_img = render_grid(final_grid_data, imgs, sizes, c_size)
         
         print(f"Saving to {OUTPUT_PATH}...")
         final_img.save(OUTPUT_PATH)
+        plot_pacing_graphs(gen_history, col_steps)
         print("Done!")
+        
         
     except Exception as e:
         print(f"Error: {e}")
