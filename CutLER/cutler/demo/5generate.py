@@ -3,20 +3,37 @@ import time
 import math
 import os
 import json
+import copy
 import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 BASE_DIR = "Generation\\mario1t ratios\\mario_1t_used"
 TILES_DIR = BASE_DIR
-RULES_FILE = os.path.join(BASE_DIR, "adjacency_rules.txt") # Assuming learner saved it here
-RATIOS_FILE = os.path.join(BASE_DIR, "ratios.json")        # <--- New ratios file
+RULES_FILE = os.path.join(BASE_DIR, "adjacency_rules.txt")
+RATIOS_FILE = os.path.join(BASE_DIR, "ratios.json")        
 
-OUTPUT_PATH = os.path.join(BASE_DIR, "..", "new adj1.png")
+base_output_path = os.path.join(BASE_DIR, "..", "no clump 50", "pic.png")
 
-GRID_WIDTH = 230    #230
-GRID_HEIGHT = 14   #14
+folder = os.path.dirname(base_output_path)
+
+# --- Ensure the frames directory exists! ---
+os.makedirs(folder, exist_ok=True)
+
+filename = os.path.basename(base_output_path)  
+name, extension = os.path.splitext(filename)
+final_path = base_output_path
+counter = 1
+
+
+
+GRID_WIDTH = 230    
+GRID_HEIGHT = 14   
 TIMEOUT = 5
+
+
+FRAMES = True
+# FRAMES = False
 
 def load_data():
     """Loads images, calculates tile sizes (in grid units), loads rules and ratios."""
@@ -26,7 +43,7 @@ def load_data():
         adjacencies = json.load(f)
         
     with open(RATIOS_FILE, 'r') as f:
-        ratios = json.load(f) # <--- Load your perfect global ratios
+        ratios = json.load(f)
     
     adjacencies = inject_background_rules(adjacencies, ratios)
 
@@ -60,7 +77,7 @@ def load_data():
     for special in ["B", "P"]:
         tile_sizes[special] = (1, 1)
 
-    return adjacencies, ratios, images, tile_sizes, CELL_SIZE # <--- Return ratios
+    return adjacencies, ratios, images, tile_sizes, CELL_SIZE
 
 # Direction Mapping: 0:Top, 1:Bottom, 2:Left, 3:Right
 DIR_MAP = {0: "top", 1: "bottom", 2: "left", 3: "right"}
@@ -77,31 +94,25 @@ def inject_background_rules(adjacencies, ratios):
 
     inverse_dir = {"top": "bottom", "bottom": "top", "left": "right", "right": "left"}
     
-    # Grab the true massive sky weight from your JSON!
     sky_weight = 1.0
 
-    # 1. B naturally connects to B and Padding with massive momentum
     for d in ["top", "bottom", "left", "right"]:
         if ["B", sky_weight] not in adjacencies["B"][d]:
              adjacencies["B"][d].append(["B", sky_weight])
         if ["P", sky_weight] not in adjacencies["B"][d]:
              adjacencies["B"][d].append(["P", sky_weight])
 
-    # 2. Ensure B creates perfect inverse rules for everything
     for tile_name, rules in adjacencies.items():
         if tile_name == "B": continue
         for direction, neighbors in rules.items():
             for n_name, n_weight in neighbors:
                 if n_name == "B":
                     inv_d = inverse_dir[direction]
-                    # Only inject if the learner didn't already find it
                     if not any(n[0] == tile_name for n in adjacencies["B"][inv_d]):
                         adjacencies["B"][inv_d].append([tile_name, n_weight])
     
     print("Injected rules for 'B' (Background).")
     return adjacencies
-
-
 
 def initialize_grid(height, width, all_tiles):
     return [[set(all_tiles) for _ in range(width)] for _ in range(height)]
@@ -199,12 +210,12 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
             weights.append(0.0)
             continue
 
-        if directional_probs:
-            local_w = 1.0
-            for p in directional_probs:
-                local_w *= p
-        else:
-            local_w = ratios.get(tile, 1.0) / total_ratio_sum
+        
+        base_ratio_weight = ratios.get(tile, 1.0) / total_ratio_sum
+        local_w = base_ratio_weight
+        for p in directional_probs:
+            local_w *= p
+        
 
         valid_bottoms = [n[0] for n in adjacencies.get(tile, {}).get("bottom", [])]
         is_structural = (tile == "B") or ("P" in valid_bottoms)
@@ -225,9 +236,10 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
                 deficit = ideal_current_count - actual_count
                 
                 if deficit < 0:
-                    pacing_multiplier = math.exp(deficit * 2) 
+                    pacing_multiplier = math.exp(deficit * 5) 
                 else:
-                    pacing_multiplier = 1.0 + deficit 
+                    pacing_multiplier = min(1.5, 1.0 + (deficit * 0.1))
+                    # pacing_multiplier = 1.0 + deficit 
 
         final_weight = local_w  * pacing_multiplier
         weights.append(final_weight)
@@ -358,20 +370,7 @@ class RetryException(Exception):
     def __init__(self, grid):
         self.grid = grid
 
-def debug_display(grid):
-    print("\n-------------------")
-    for row in grid:
-        line = []
-        for cell in row:
-            if isinstance(cell, str):
-                line.append(f"[{cell[-7:-4]:^3}]")
-            elif isinstance(cell, set):
-                line.append(f"<{len(cell)} >") 
-            else:
-                line.append("[ ? ]")
-        print("".join(line))
-    print("-------------------------\n")
-
+# Pass FRAMES in so the function knows whether to record states
 def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout): 
     all_tiles = get_all_tile_names(adjacencies)
     
@@ -386,6 +385,9 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
             generation_history = {t: {'actual': [], 'ideal': []} for t in ratios.keys()}
             collapse_steps = []
             
+            placements = 0 
+            frame_states = [] # <--- NEW: List to hold our successful grid snapshots
+            
             while True:
                 check_timeout(start_time, grid)
                 
@@ -395,10 +397,7 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
                     raise RetryException(grid)
 
                 if cell is None:
-                    for y in range(len(grid) - 1): 
-                        for x in range(len(grid[0])):
-                            if isinstance(grid[y][x], set) and len(grid[y][x]) == 0:
-                                raise RetryException(grid)
+                    # Level finished successfully!
                     break 
                 
                 y, x = cell
@@ -406,13 +405,19 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
                 if isinstance(grid[y][x], str): continue
                     
                 tile = collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, generation_history, collapse_steps)
-                #debug_display(grid)
                 
                 if tile is not None:
                     propagate(grid, y, x, adjacencies, tile_sizes)
+                    
+                    # --- NEW LOGIC: Save a text snapshot, not an image! ---
+                    placements += 1
+                    if FRAMES and placements % 50 == 0:
+                        # deepcopy ensures we don't accidentally link to the original sets
+                        frame_states.append(copy.deepcopy(grid)) 
+                        
                 else:
                     print(f"Dead end at {y},{x}. Restarting...")
-                    raise RetryException(grid)
+                    raise RetryException(grid) # This throws away frame_states!
             
             final_grid = []
             for row in grid:
@@ -424,7 +429,8 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
                         new_row.append("B") 
                 final_grid.append(new_row)
                 
-            return np.array(final_grid), generation_history, collapse_steps
+            # --- Return frame_states at the end! ---
+            return np.array(final_grid), generation_history, collapse_steps, frame_states
 
     attempts = 0
     while True:
@@ -437,21 +443,11 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
             continue
 
 def plot_pacing_graphs(history, steps):
-    """
-    Generates a grid of line graphs, one for each tile type,
-    showing how closely the actual count followed the ideal count.
-    """
     num_tiles = len(history)
-    
-    # Set how many columns you want side-by-side
     cols = 4 
     rows = math.ceil(num_tiles / cols)
-    
-    # Make the figure wider, and scale height based on rows
     fig, axes = plt.subplots(rows, cols, figsize=(16, 3 * rows), sharex=True)
     
-    # Flatten the 2D axes array into a 1D list so it's easy to loop through
-    # (If there's only 1 row or column, flatten() still makes it a flat list)
     if num_tiles > 1:
         axes = axes.flatten()
     else:
@@ -459,18 +455,13 @@ def plot_pacing_graphs(history, steps):
         
     for i, (tile, data) in enumerate(history.items()):
         ax = axes[i]
-        
-        # Plot the lines
         ax.plot(steps, data['actual'], label='Actual', color='blue', linewidth=2)
         ax.plot(steps, data['ideal'], label='Ideal', color='orange', linestyle='--', linewidth=2)
-        
-        # Formatting
         ax.set_title(f"Tile: '{tile}'")
         ax.grid(True, alpha=0.3)
-        if i == 0: # Only put the legend on the first graph to save space
+        if i == 0: 
             ax.legend()
         
-        # Highlight when Actual is over/under ideal
         ax.fill_between(steps, data['actual'], data['ideal'], 
                         where=[a < i for a, i in zip(data['actual'], data['ideal'])], 
                         color='red', alpha=0.1)
@@ -478,7 +469,6 @@ def plot_pacing_graphs(history, steps):
                         where=[a >= i for a, i in zip(data['actual'], data['ideal'])], 
                         color='green', alpha=0.1)
 
-    # Hide any extra empty subplots if num_tiles isn't a perfect multiple of cols
     for j in range(i + 1, len(axes)):
         fig.delaxes(axes[j])
 
@@ -486,8 +476,7 @@ def plot_pacing_graphs(history, steps):
     plt.show()
 
 
-
-def render_grid(grid, images, tile_sizes, cell_size): # <--- Add tile_sizes here
+def render_grid(grid, images, tile_sizes, cell_size, max_entropy=0): 
     rows = len(grid)
     cols = len(grid[0])
     cw, ch = cell_size
@@ -495,19 +484,45 @@ def render_grid(grid, images, tile_sizes, cell_size): # <--- Add tile_sizes here
     img_h = rows * ch
     
     canvas = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    
+    # --- NEW: Create a transparent overlay for the heatmap ---
+    heatmap_overlay = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    draw = None
+    if max_entropy > 0:
+        draw = ImageDraw.Draw(heatmap_overlay)
+        
     covered_cells = set()
 
     for y in range(rows - 1, -1, -1):
         for x in range(cols):
             tile_name = grid[y][x]
 
+            # --- NEW LOGIC: Draw Heatmap for uncollapsed sets ---
+            if isinstance(tile_name, set): 
+                if draw and len(tile_name) > 0:
+                    entropy = len(tile_name)
+                    
+                    # Normalize entropy from 0.0 (hottest/fewest options) to 1.0 (coldest/most options)
+                    normalized = min(1.0, max(0.0, (entropy - 1) / (max_entropy - 1))) if max_entropy > 1 else 0
+                    
+                    # Colors: Hot = Red (255, 0, 0), Cold = Blue (0, 0, 255)
+                    r = int(255 * (1 - normalized))
+                    b = int(255 * normalized)
+                    
+                    # Opacity: Hot/Red is dark (200), Cold/Blue is faint (40)
+                    alpha = int(40 + 160 * (1 - normalized)) 
+                    
+                    px = x * cw
+                    py = y * ch
+                    draw.rectangle([px, py, px + cw, py + ch], fill=(r, 0, b, alpha))
+                continue 
+
+            # Draw normal collapsed tiles
             if tile_name in ["B", "P"]: continue
             if tile_name not in images: continue
-            
             if (x, y) in covered_cells: continue
 
             img = images[tile_name]
-            
             height_in_cells, width_in_cells = tile_sizes.get(tile_name, (1, 1))
 
             px = x * cw
@@ -523,29 +538,54 @@ def render_grid(grid, images, tile_sizes, cell_size): # <--- Add tile_sizes here
                     if target_x >= cols or target_y < 0:
                         continue
 
-                    if grid[target_y][target_x] == tile_name:
+                    if not isinstance(grid[target_y][target_x], set) and grid[target_y][target_x] == tile_name:
                         covered_cells.add((target_x, target_y))
+
+    # --- Apply the heatmap overlay on top of the tiles ---
+    if max_entropy > 0:
+        canvas.alpha_composite(heatmap_overlay)
 
     return canvas
 
 if __name__ == "__main__":
     try:
-        # Load ALL data, including the new ratios!
-        adj, ratios, imgs, sizes, c_size = load_data() 
-        
-        print("Generating grid...")
-        # Pass ratios to generate_level
-        final_grid_data, gen_history, col_steps = generate_level(GRID_HEIGHT, GRID_WIDTH, adj, ratios, sizes, TIMEOUT) 
-        
-        
-        print("Rendering image...")
-        final_img = render_grid(final_grid_data, imgs, sizes, c_size)
-        
-        print(f"Saving to {OUTPUT_PATH}...")
-        final_img.save(OUTPUT_PATH)
-        plot_pacing_graphs(gen_history, col_steps)
-        print("Done!")
-        
+        for i in range(1):
+            while os.path.exists(final_path):
+                new_filename = f"{name}{counter}{extension}"
+                final_path = os.path.join(folder, new_filename)
+                counter += 1
+            adj, ratios, imgs, sizes, c_size = load_data() 
+            
+            # Calculate max possible entropy to calibrate the heatmap colors
+            max_possible_entropy = len(get_all_tile_names(adj))
+            
+            print("Generating grid...")
+            current_run_name = f"{name}{counter if counter > 1 else ''}" 
+            
+
+            final_grid_data, gen_history, col_steps, frame_states = generate_level(
+                GRID_HEIGHT, GRID_WIDTH, adj, ratios, sizes, TIMEOUT
+            ) 
+            
+            # --- Render the frames with the Heatmap turned ON ---
+            if FRAMES and frame_states:
+                print(f"Level generated successfully! Rendering {len(frame_states)} frames with heatmap...")
+                for i, state_grid in enumerate(frame_states):
+                    step_num = (i + 1) * 50
+                    # Pass max_possible_entropy to trigger the heatmap
+                    temp_img = render_grid(state_grid, imgs, sizes, c_size, max_entropy=max_possible_entropy)
+                    frame_filename = f"{current_run_name}_step_{step_num:04d}.png"
+                    frame_path = os.path.join(folder, frame_filename)
+                    temp_img.save(frame_path)
+            
+            print("Rendering final image...")
+            # Pass 0 to max_entropy so the final image has no heatmap overlay
+            final_img = render_grid(final_grid_data, imgs, sizes, c_size, max_entropy=0)
+            
+            print(f"Saving to {final_path}...")
+            final_img.save(final_path)
+            plot_pacing_graphs(gen_history, col_steps)
+            print("Done!")
         
     except Exception as e:
         print(f"Error: {e}")

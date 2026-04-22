@@ -78,10 +78,16 @@ class LevelReconstructor:
             h, w = img_bgr.shape[:2]
             template_key = img_path.name 
 
+            erosion_kernel = np.ones((5, 5), np.uint8)
+            match_mask = cv2.erode(mask, erosion_kernel, iterations=1)
+            if cv2.countNonZero(match_mask) == 0:
+                match_mask = mask
+
             templates[template_key] = {
                 'img_bgr': img_bgr,
                 'img_bgra': img_bgra,
                 'mask': mask,
+                'match_mask': match_mask,
                 'w': w,
                 'h': h,
                 'is_valid': is_valid,
@@ -110,67 +116,70 @@ class LevelReconstructor:
         # Sort templates large to small
         sorted_templates = sorted(level_templates.items(), key=lambda item: item[1]['area'], reverse=True)
 
-        for template_key, template_data in sorted_templates:
-            if not template_data['is_valid']: continue
-            
-            t_h, t_w = template_data['h'], template_data['w']
-            if t_h > h or t_w > w: continue
+        pass_thresholds = [self.MATCH_THRESHOLD, self.MATCH_THRESHOLD * 2.0]
 
-            try:
-                result = cv2.matchTemplate(level_img_for_matching, template_data['img_bgr'], cv2.TM_SQDIFF_NORMED, mask=template_data['mask'])
-                locations = np.where(result <= self.MATCH_THRESHOLD)
+        for pass_num, current_threshold in enumerate(pass_thresholds):
+            for template_key, template_data in sorted_templates:
+                if not template_data['is_valid']: continue
                 
-                matches = []
-                for y, x in zip(*locations):
-                    score = result[y, x]
-                    matches.append((x, y, score))
-                
-                matches.sort(key=lambda x: x[2])
+                t_h, t_w = template_data['h'], template_data['w']
+                if t_h > h or t_w > w: continue
 
-                if len(matches) > 0 and template_key in self.unmatched_templates:
-                    self.unmatched_templates.remove(template_key)
+                try:
+                    result = cv2.matchTemplate(level_img_for_matching, template_data['img_bgr'], cv2.TM_SQDIFF_NORMED, mask=template_data['match_mask'])
+                    locations = np.where(result <= self.MATCH_THRESHOLD)
+                    
+                    matches = []
+                    for y, x in zip(*locations):
+                        score = result[y, x]
+                        matches.append((x, y, score))
+                    
+                    matches.sort(key=lambda x: x[2])
 
-                for x, y, score in matches:
-                    alpha_mask = template_data['img_bgra'][:, :, 3] > 127
-                    
-                   
+                    if len(matches) > 0 and template_key in self.unmatched_templates:
+                        self.unmatched_templates.remove(template_key)
 
-                    OVERLAP_TOLERANCE = 9 
-                    kernel_size = OVERLAP_TOLERANCE * 2 + 1
-                    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                    for x, y, score in matches:
+                        alpha_mask = template_data['img_bgra'][:, :, 3] > 127
+                        
                     
-                    # Shrink the collision mask
-                    alpha_uint8 = alpha_mask.astype(np.uint8) * 255
-                    shrunk_mask_uint8 = cv2.erode(alpha_uint8, kernel, iterations=1)
-                    shrunk_mask = shrunk_mask_uint8 > 127
-                    
-                    # Safeguard: If the tile is so thin that erosion destroyed it, use the original mask
-                    if not np.any(shrunk_mask):
-                        shrunk_mask = alpha_mask
 
-                    # Check for collisions ONLY using the shrunk core mask
-                    roi_visited = visited_mask[y:y + t_h, x:x + t_w]
-                    if np.any(roi_visited[shrunk_mask]):
-                        continue
+                        OVERLAP_TOLERANCE = 4 
+                        kernel_size = OVERLAP_TOLERANCE * 2 + 1
+                        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                        
+                        # Shrink the collision mask
+                        alpha_uint8 = alpha_mask.astype(np.uint8) * 255
+                        shrunk_mask_uint8 = cv2.erode(alpha_uint8, kernel, iterations=1)
+                        shrunk_mask = shrunk_mask_uint8 > 127
+                        
+                        # Safeguard: If the tile is so thin that erosion destroyed it, use the original mask
+                        if not np.any(shrunk_mask):
+                            shrunk_mask = alpha_mask
 
-                    overlap_heatmap[y:y + t_h, x:x + t_w][alpha_mask] += 1
-                    # Apply the tile
-                    roi_grid = blank_grid[y:y + t_h, x:x + t_w]
-                    roi_grid[alpha_mask] = template_data['img_bgra'][alpha_mask]
-                    blank_grid[y:y + t_h, x:x + t_w] = roi_grid
-                    
-                    roi_ids = id_grid[y:y + t_h, x:x + t_w]
-                    roi_ids[alpha_mask] = template_key
-                    id_grid[y:y + t_h, x:x + t_w] = roi_ids
+                        # Check for collisions ONLY using the shrunk core mask
+                        roi_visited = visited_mask[y:y + t_h, x:x + t_w]
+                        if np.any(roi_visited[shrunk_mask]):
+                            continue
 
-                    visited_mask[y:y + t_h, x:x + t_w][alpha_mask] = True
-                    placed_instances.append((template_key, x, y, t_w, t_h))
-                    
-                    # Mark tile as used for our minimal set extraction
-                    self.used_templates.add(template_data['filepath'])
-                    
-            except cv2.error:
-                continue
+                        overlap_heatmap[y:y + t_h, x:x + t_w][alpha_mask] += 1
+                        # Apply the tile
+                        roi_grid = blank_grid[y:y + t_h, x:x + t_w]
+                        roi_grid[alpha_mask] = template_data['img_bgra'][alpha_mask]
+                        blank_grid[y:y + t_h, x:x + t_w] = roi_grid
+                        
+                        roi_ids = id_grid[y:y + t_h, x:x + t_w]
+                        roi_ids[alpha_mask] = template_key
+                        id_grid[y:y + t_h, x:x + t_w] = roi_ids
+
+                        visited_mask[y:y + t_h, x:x + t_w][alpha_mask] = True
+                        placed_instances.append((template_key, x, y, t_w, t_h))
+                        
+                        # Mark tile as used for our minimal set extraction
+                        self.used_templates.add(template_data['filepath'])
+                        
+                except cv2.error:
+                    continue
 
         # Generate output outputs
         if level_img_original.shape[2] == 4:
@@ -337,6 +346,7 @@ class LevelReconstructor:
             self.save_frequencies(freq_output_path)
             
         if used_tiles_output_path:
+            Path(used_tiles_output_path).parent.mkdir(parents=True, exist_ok=True)
             self.save_used_tiles(used_tiles_output_path)
 
 
