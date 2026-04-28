@@ -36,8 +36,8 @@ def setup_cfg(args):
 def get_parser():
     parser = argparse.ArgumentParser(description="CutLER Segmentation Mask Extractor")
     parser.add_argument("--config-file", default="model_zoo/configs/CutLER-ImageNet/cascade_mask_rcnn_R_50_FPN.yaml", metavar="FILE", help="path to config file")
-    parser.add_argument("--input", nargs="+", help="A list of space separated input images or a single glob pattern")
-    parser.add_argument("--output", default="./output_segments", help="A directory to save output segmentation masks")
+    parser.add_argument("--input", nargs="+", default="./demo/imgs/3 image test", help="A list of space separated input images or a single glob pattern")
+    parser.add_argument("--output", default="./output_segments/3 image test", help="A directory to save output segmentation masks")
     parser.add_argument("--confidence-threshold", type=float, default=0.35, help="Minimum score for instance predictions")
     parser.add_argument("--opts", help="Modify config options", default=[], nargs=argparse.REMAINDER)
     return parser

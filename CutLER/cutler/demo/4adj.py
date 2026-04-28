@@ -21,7 +21,8 @@ class LevelReconstructor:
         self.template_cache = {} 
         self.source_image_cache = {}
         self.unmatched_templates = set()
-        self.used_templates = set() # NEW: Tracks successfully placed tiles
+        self.used_templates = set() 
+        self.dynamic_templates = {}
 
         # --- Global Rule Dictionary ---
         self.adjacency_rules = defaultdict(lambda: {"top": Counter(), "bottom": Counter(), "left": Counter(), "right": Counter()})
@@ -101,8 +102,6 @@ class LevelReconstructor:
         blank_grid = np.zeros((h, w, 4), dtype=np.uint8)
         id_grid = np.full((h, w), "B", dtype=object)
         visited_mask = np.zeros((h, w), dtype=bool)
-        
-        # NEW: Matrix to track how many times a solid pixel tries to be placed
         overlap_heatmap = np.zeros((h, w), dtype=np.uint16)
 
         if len(level_img_original.shape) == 3 and level_img_original.shape[2] == 4:
@@ -115,6 +114,34 @@ class LevelReconstructor:
 
         # Sort templates large to small
         sorted_templates = sorted(level_templates.items(), key=lambda item: item[1]['area'], reverse=True)
+
+        # --- UNSUPERVISED GRID DETECTION ---
+        # 1. Find the true grid size by looking for the most common tile width/height
+        valid_widths = [t['w'] for t in self.template_cache.values() if t['is_valid']]
+        valid_heights = [t['h'] for t in self.template_cache.values() if t['is_valid']]
+        
+        if valid_widths and valid_heights:
+            self.cell_w = Counter(valid_widths).most_common(1)[0][0]
+            self.cell_h = Counter(valid_heights).most_common(1)[0][0]
+        else:
+            return # Failsafe
+            
+        print(f"  -> Unsupervised Grid Detection: {self.cell_w}x{self.cell_h}")
+
+        # 2. Auto-calibrate the grid offset by looking at the 5 largest tiles
+        x_offsets = []
+        for template_key, template_data in sorted_templates[:5]: 
+            if not template_data['is_valid']: continue
+            try:
+                res = cv2.matchTemplate(level_img_for_matching, template_data['img_bgr'], cv2.TM_SQDIFF_NORMED, mask=template_data['match_mask'])
+                locs = np.where(res <= self.MATCH_THRESHOLD)
+                for start_x in locs[1]:
+                    x_offsets.append(start_x % self.cell_w)
+            except cv2.error:
+                continue
+
+        global_offset_x = Counter(x_offsets).most_common(1)[0][0] if x_offsets else 0
+        print(f"  -> Auto-calibrated Grid Offset: {global_offset_x} pixels")
 
         pass_thresholds = [self.MATCH_THRESHOLD, self.MATCH_THRESHOLD * 2.0]
 
@@ -161,22 +188,76 @@ class LevelReconstructor:
                         roi_visited = visited_mask[y:y + t_h, x:x + t_w]
                         if np.any(roi_visited[shrunk_mask]):
                             continue
-
-                        overlap_heatmap[y:y + t_h, x:x + t_w][alpha_mask] += 1
-                        # Apply the tile
-                        roi_grid = blank_grid[y:y + t_h, x:x + t_w]
-                        roi_grid[alpha_mask] = template_data['img_bgra'][alpha_mask]
-                        blank_grid[y:y + t_h, x:x + t_w] = roi_grid
+                        relative_x = x - global_offset_x
+                        offset_x = relative_x % self.cell_w
                         
-                        roi_ids = id_grid[y:y + t_h, x:x + t_w]
-                        roi_ids[alpha_mask] = template_key
-                        id_grid[y:y + t_h, x:x + t_w] = roi_ids
+                        is_middle_object = False
+                        if self.cell_w > 0:
+                            is_middle_object = abs(offset_x - (self.cell_w // 2)) <= 1
 
-                        visited_mask[y:y + t_h, x:x + t_w][alpha_mask] = True
-                        placed_instances.append((template_key, x, y, t_w, t_h))
-                        
-                        # Mark tile as used for our minimal set extraction
-                        self.used_templates.add(template_data['filepath'])
+                        if is_middle_object:
+                            # IT IS A CENTERED OBJECT (Like the Piranha Plant)
+                            grid_x_left = x - offset_x
+                            grid_x_right = x - offset_x + self.cell_w
+                            split_pt = self.cell_w - offset_x
+                            
+                            # -- Create Left Half --
+                            left_key = f"split_L_{template_key}"
+                            if left_key not in self.dynamic_templates:
+                                left_bgra = np.zeros((t_h, self.cell_w, 4), dtype=np.uint8)
+                                actual_split_w = min(split_pt, t_w)
+                                left_bgra[:, offset_x : offset_x + actual_split_w] = template_data['img_bgra'][:, :actual_split_w]
+                                self.dynamic_templates[left_key] = left_bgra
+                            else:
+                                left_bgra = self.dynamic_templates[left_key]
+
+                            # -- Create Right Half --
+                            right_key = f"split_R_{template_key}"
+                            if right_key not in self.dynamic_templates:
+                                right_bgra = np.zeros((t_h, self.cell_w, 4), dtype=np.uint8)
+                                if t_w > split_pt:
+                                    actual_rem_w = min(t_w - split_pt, self.cell_w)
+                                    right_bgra[:, :actual_rem_w] = template_data['img_bgra'][:, split_pt : split_pt + actual_rem_w]
+                                self.dynamic_templates[right_key] = right_bgra
+                            else:
+                                right_bgra = self.dynamic_templates[right_key]
+
+                            # Apply visual graphics normally so it looks seamless in output
+                            overlap_heatmap[y:y + t_h, x:x + t_w][alpha_mask] += 1
+                            roi_grid = blank_grid[y:y + t_h, x:x + t_w]
+                            roi_grid[alpha_mask] = template_data['img_bgra'][alpha_mask]
+                            blank_grid[y:y + t_h, x:x + t_w] = roi_grid
+                            visited_mask[y:y + t_h, x:x + t_w][alpha_mask] = True
+
+                            # Register ID and Adjacency using the strictly grid-aligned halves
+                            l_alpha = left_bgra[:, :, 3] > 127
+                            if np.any(l_alpha):
+                                id_grid[y:y + t_h, grid_x_left:grid_x_left + self.cell_w][l_alpha] = left_key
+                                placed_instances.append((left_key, grid_x_left, y, self.cell_w, t_h))
+                                
+                            max_w = min(self.cell_w, w - grid_x_right) 
+                            if max_w > 0:
+                                r_alpha = right_bgra[:, :max_w, 3] > 127
+                                if np.any(r_alpha):
+                                    id_grid[y:y + t_h, grid_x_right:grid_x_right + max_w][r_alpha] = right_key
+                                    placed_instances.append((right_key, grid_x_right, y, max_w, t_h))
+                            
+                        else:
+                            overlap_heatmap[y:y + t_h, x:x + t_w][alpha_mask] += 1
+                            # Apply the tile
+                            roi_grid = blank_grid[y:y + t_h, x:x + t_w]
+                            roi_grid[alpha_mask] = template_data['img_bgra'][alpha_mask]
+                            blank_grid[y:y + t_h, x:x + t_w] = roi_grid
+                            
+                            roi_ids = id_grid[y:y + t_h, x:x + t_w]
+                            roi_ids[alpha_mask] = template_key
+                            id_grid[y:y + t_h, x:x + t_w] = roi_ids
+
+                            visited_mask[y:y + t_h, x:x + t_w][alpha_mask] = True
+                            placed_instances.append((template_key, x, y, t_w, t_h))
+                            
+                            # Mark tile as used for our minimal set extraction
+                            self.used_templates.add(template_data['filepath'])
                         
                 except cv2.error:
                     continue
@@ -305,64 +386,174 @@ class LevelReconstructor:
 
     # NEW: Function to extract and save only the used segments
     def save_used_tiles(self, output_dir):
-        out_path = Path(output_dir)
+        # .resolve() forces it to be a strict Absolute Path (e.g., C:/Users/.../tiles)
+        # This prevents OpenCV from getting confused by relative paths and silently failing.
+        out_path = Path(output_dir).resolve() 
         out_path.mkdir(parents=True, exist_ok=True)
-        print(f"\nSaving {len(self.used_templates)} unique used tiles to {output_dir}...")
         
+        saved_std = 0
+        saved_dyn = 0
+
+        # 1. Save standard templates
         for src_path in self.used_templates:
-            # src_path is now directly the Path object we saved earlier
             if src_path and src_path.exists():
                 dest_path = out_path / src_path.name
                 shutil.copy(src_path, dest_path)
+                saved_std += 1
+                
+        # 2. Save dynamically generated split templates
+        for virtual_key, bgra_matrix in self.dynamic_templates.items():
+            dest = str(out_path / virtual_key)
+            
+            # Attempt to save the image
+            success = cv2.imwrite(dest, bgra_matrix)
+            
+            if success:
+                saved_dyn += 1
+            else:
+                # If OpenCV silently fails, force it to tell us why!
+                print(f"\n[!] CRITICAL ERROR: OpenCV failed to save split image!")
+                print(f"    Attempted Path: {dest}")
+                print(f"    Matrix Shape: {bgra_matrix.shape}")
+                print(f"    Matrix Type: {bgra_matrix.dtype}")
 
-    def run_reconstruction(self, unmatched_output_path=None, rules_output_path=None, freq_output_path=None, used_tiles_output_path=None):
+        print(f"  -> Saved {saved_std} standard tiles and {saved_dyn} split tiles to {out_path.name}/")
+
+    def _enforce_rule_symmetry(self):
+        """
+        Iterates through the generated adjacency rules and guarantees perfect mathematical symmetry.
+        Then, recursively prunes any tiles that have dead ends (empty boundaries) to ensure
+        the Wave Function Collapse generator never gets stuck.
+        """
+        print("  -> Enforcing perfect mathematical symmetry on adjacency rules...")
+        
+        all_tiles = list(self.adjacency_rules.keys())
+        opposites = {
+            "top": "bottom",
+            "bottom": "top",
+            "left": "right",
+            "right": "left"
+        }
+        
+        # --- 1. ENFORCE PERFECT SYMMETRY ---
+        for tile_a in all_tiles:
+            for direction, opposite_direction in opposites.items():
+                for tile_b, count_a in list(self.adjacency_rules[tile_a][direction].items()):
+                    if tile_b == "P": 
+                        continue
+                        
+                    count_b = self.adjacency_rules[tile_b][opposite_direction].get(tile_a, 0)
+                    max_count = max(count_a, count_b)
+                    
+                    self.adjacency_rules[tile_a][direction][tile_b] = max_count
+                    self.adjacency_rules[tile_b][opposite_direction][tile_a] = max_count
+
+        # --- 2. RECURSIVELY PRUNE DEAD TILES ---
+        print("  -> Pruning dead tiles with empty boundaries...")
+        is_pruning = True
+        
+        while is_pruning:
+            is_pruning = False
+            tiles_to_remove = set()
+            
+            # Find any tile that has 0 neighbors in any of the 4 directions
+            for tile, rules in self.adjacency_rules.items():
+                if tile in ["B", "P"]: continue 
+                
+                for d in ["top", "bottom", "left", "right"]:
+                    if len(rules[d]) == 0:
+                        tiles_to_remove.add(tile)
+                        break 
+
+            if not tiles_to_remove:
+                break
+                
+            # Scrub the dead tiles from all data structures
+            for tile in tiles_to_remove:
+                print(f"    [X] Pruned dead tile: {tile}")
+                
+                # Remove from Adjacency Rules
+                if tile in self.adjacency_rules:
+                    del self.adjacency_rules[tile]
+                    
+                # Remove from Frequencies / Ratios
+                if tile in self.tile_frequencies:
+                    del self.tile_frequencies[tile]
+                    
+                # Prevent the image from being saved to the output folder!
+                self.used_templates = {p for p in self.used_templates if p.name != tile}
+                if tile in self.dynamic_templates:
+                    del self.dynamic_templates[tile]
+                    
+                is_pruning = True
+                
+            # Remove the dead tiles from the neighbor lists of surviving tiles
+            for tile, rules in self.adjacency_rules.items():
+                for d in ["top", "bottom", "left", "right"]:
+                    for dead_tile in tiles_to_remove:
+                        if dead_tile in rules[d]:
+                            del rules[d][dead_tile]
+
+    def run_reconstruction(self, base_output_dir):
         self._load_source_levels()
 
         if not self.source_image_cache:
             return
 
         print("\n--- Starting Level Reconstruction & Analysis ---")
+        out_base = Path(base_output_dir)
         
         for level_name, level_img in tqdm(self.source_image_cache.items(), desc="Processing Levels"):
             level_stem = Path(level_name).stem
+            
+            # 1. RESET STATE FOR THIS LEVEL
+            # This ensures data doesn't bleed from one level into the next
+            self.adjacency_rules = defaultdict(lambda: {"top": Counter(), "bottom": Counter(), "left": Counter(), "right": Counter()})
+            self.tile_frequencies = defaultdict(float)
+            self.used_templates = set()
+            self.dynamic_templates = {}
+            self.cell_w = 0
+            self.cell_h = 0
+
+            # 2. LOAD AND RECONSTRUCT
             self.template_cache = self._load_templates_for_level(level_stem)
             
             if not self.template_cache:
                 continue
 
-            if self.cell_w == 0:
-                valid_t = [t for t in self.template_cache.values() if t['is_valid']]
-                if valid_t:
-                    self.cell_w = min(t['w'] for t in valid_t)
-                    self.cell_h = min(t['h'] for t in valid_t)
+            valid_t = [t for t in self.template_cache.values() if t['is_valid']]
+            if valid_t:
+                self.cell_w = min(t['w'] for t in valid_t)
+                self.cell_h = min(t['h'] for t in valid_t)
 
             self.unmatched_templates = set(self.template_cache.keys())
             self._reconstruct_single_level(level_name, level_img, level_stem)
 
-        if rules_output_path:
-            self.save_adjacency_rules(rules_output_path)
+            # 3. CREATE LEVEL-SPECIFIC OUTPUT FOLDER
+            # e.g., "Generation/3 image test/level_1_data"
+            level_output_dir = out_base / f"{level_stem}_data"
+            level_output_dir.mkdir(parents=True, exist_ok=True)
 
-        if freq_output_path:
-            self.save_frequencies(freq_output_path)
+            self._enforce_rule_symmetry()
+            # 4. SAVE LEVEL SPECIFIC FILES
+            self.save_adjacency_rules(level_output_dir / "adjacency_rules.txt")
+            self.save_frequencies(level_output_dir / "ratios.json")
             
-        if used_tiles_output_path:
-            Path(used_tiles_output_path).parent.mkdir(parents=True, exist_ok=True)
-            self.save_used_tiles(used_tiles_output_path)
+            # I added a "tiles" subfolder here so your images don't get mixed up with the text files!
+            self.save_used_tiles(level_output_dir / "tiles")
 
 
 if __name__ == "__main__":
+    base_dir = "Generation/128"
+    
     reconstructor = LevelReconstructor(
-        segment_path="Generation/mario1t ratios",
+        segment_path=base_dir,
         level_path="demo/imgs/test",
-        output_path="Generation/mario1t ratios",
+        output_path=base_dir,
         match_threshold=0.05
     )
     
-    # Notice the new 'used_tiles_output_path' argument added below
+    # We only need to tell it the base folder now; it handles the rest!
     reconstructor.run_reconstruction(
-        used_tiles_output_path="Generation/mario1t ratios/mario_1t_used",
-        unmatched_output_path="output_segments/unmatched",
-        rules_output_path="Generation/mario1t ratios/mario_1t_used/adjacency_rules.txt",
-        freq_output_path="Generation/mario1t ratios/mario_1t_used/ratios.json"
-        
+        base_output_dir=base_dir
     )

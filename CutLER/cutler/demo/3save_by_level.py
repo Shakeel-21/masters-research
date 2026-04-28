@@ -6,9 +6,9 @@ import sys
 
 SEGMENT_PATH = Path("output_segments/core3")
 ORIGINAL_PATH = Path("demo/imgs/test")
-BLOCKS_PATH = Path("output_segments/TestNorm04")
+BLOCKS_PATH = Path("output_segments/TestNorm05")
 
-MATCH_THRESHOLD = 0.06
+MATCH_THRESHOLD = 0.05
 # NMS_THRESHOLD: Controls how much overlap is allowed. 
 # 0.3 means if two boxes overlap by more than 30%, the one with the lower score is deleted.
 NMS_OVERLAP_THRESHOLD = 0.30

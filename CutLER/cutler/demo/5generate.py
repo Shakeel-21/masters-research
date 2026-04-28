@@ -4,16 +4,116 @@ import math
 import os
 import json
 import copy
+import shutil
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageDraw
+from collections import Counter, defaultdict
 
-BASE_DIR = "Generation\\mario1t ratios\\mario_1t_used"
-TILES_DIR = BASE_DIR
+
+ROOT_DIR = os.path.join("Generation", "128", "mario_2t_data")
+BASE_DIR = ROOT_DIR
+GRID_WIDTH = 230    
+GRID_HEIGHT = 14   
+TIMEOUT = 30
+
+
+# FRAMES = True
+FRAMES = False
+
+
+def merge_wfc_levels(level_paths, output_dir):
+    print(f"Merging {len(level_paths)} level datasets into {output_dir}...")
+    os.makedirs(output_dir, exist_ok=True)
+    global_tiles_dir = os.path.join(output_dir, "tiles")
+    os.makedirs(global_tiles_dir, exist_ok=True)
+
+    global_ratios = defaultdict(float)
+    global_adj = defaultdict(lambda: {
+        "top": defaultdict(int), 
+        "bottom": defaultdict(int), 
+        "left": defaultdict(int), 
+        "right": defaultdict(int)
+    })
+
+    for level_path in level_paths:
+        # 1. Process Ratios
+        ratio_file = os.path.join(level_path, "ratios.json")
+        if os.path.exists(ratio_file):
+            with open(ratio_file, 'r') as f:
+                ratios = json.load(f)
+                for tile, weight in ratios.items():
+                    global_ratios[tile] += float(weight)
+
+        # 2. Process Adjacencies
+        adj_file = os.path.join(level_path, "adjacency_rules.txt")
+        if os.path.exists(adj_file):
+            with open(adj_file, 'r') as f:
+                adjacencies = json.load(f)
+                for tile, directions in adjacencies.items():
+                    for direction, neighbors in directions.items():
+                        for n_name, n_weight in neighbors:
+                            global_adj[tile][direction][n_name] += int(n_weight)
+
+        # 3. Copy Tiles
+        tiles_dir = os.path.join(level_path, "tiles")
+        if os.path.exists(tiles_dir):
+            for tile_img in os.listdir(tiles_dir):
+                src_img = os.path.join(tiles_dir, tile_img)
+                dst_img = os.path.join(global_tiles_dir, tile_img)
+                if not os.path.exists(dst_img):
+                    shutil.copy2(src_img, dst_img)
+
+    # 4. Average ratios
+    for tile in global_ratios:
+        global_ratios[tile] = round(global_ratios[tile] / len(level_paths), 2)
+
+    # 5. Format adjacencies back to lists
+    final_adj = {}
+    for tile, directions in global_adj.items():
+        final_adj[tile] = {}
+        for d in ["top", "bottom", "left", "right"]:
+            final_adj[tile][d] = [[n, w] for n, w in directions[d].items()]
+
+    # 6. Save using standard names so the rest of the script finds them easily
+    with open(os.path.join(output_dir, "ratios.json"), 'w') as f:
+        json.dump(global_ratios, f, indent=4)
+    with open(os.path.join(output_dir, "adjacency_rules.txt"), 'w') as f:
+        json.dump(final_adj, f, indent=4)
+        
+    print("Merge complete!\n")
+
+
+
+
+level_folders = []
+if os.path.exists(ROOT_DIR):
+    # 1. Check if ROOT_DIR is ALREADY a valid level folder
+    if os.path.exists(os.path.join(ROOT_DIR, "adjacency_rules.txt")):
+        level_folders.append(ROOT_DIR)
+    else:
+        # 2. Otherwise, scan inside it for level subfolders
+        for item in os.listdir(ROOT_DIR):
+            item_path = os.path.join(ROOT_DIR, item)
+            # Skip the merged folder itself to prevent recursive merging
+            if item == "merged_data" or item == "Generations":
+                continue
+            if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "adjacency_rules.txt")):
+                level_folders.append(item_path)
+
+if len(level_folders) > 1:
+    merged_output_dir = os.path.join(ROOT_DIR, "merged_data")
+    merge_wfc_levels(level_folders, merged_output_dir)
+    BASE_DIR = merged_output_dir  # Override BASE_DIR to point to the merged results
+elif len(level_folders) == 1:
+    BASE_DIR = level_folders[0]
+
+
+TILES_DIR = os.path.join(BASE_DIR, "tiles")
 RULES_FILE = os.path.join(BASE_DIR, "adjacency_rules.txt")
 RATIOS_FILE = os.path.join(BASE_DIR, "ratios.json")        
 
-base_output_path = os.path.join(BASE_DIR, "..", "no clump 50", "pic.png")
+base_output_path = os.path.join(BASE_DIR, "Generations", "new.png")
 
 folder = os.path.dirname(base_output_path)
 
@@ -27,13 +127,10 @@ counter = 1
 
 
 
-GRID_WIDTH = 230    
-GRID_HEIGHT = 14   
-TIMEOUT = 5
 
 
-FRAMES = True
-# FRAMES = False
+
+
 
 def load_data():
     """Loads images, calculates tile sizes (in grid units), loads rules and ratios."""
@@ -57,16 +154,19 @@ def load_data():
     if not found_files:
         raise FileNotFoundError(f"No images found in {TILES_DIR}!")
 
-    temp_dims = []
+    temp_widths = []
+    temp_heights = []
     for fname in found_files:
         img_path = os.path.join(TILES_DIR, fname)
         img = Image.open(img_path).convert("RGBA")
         images[fname] = img
-        temp_dims.append(img.size) 
+        temp_widths.append(img.size[0]) 
+        temp_heights.append(img.size[1]) 
     
-    min_w = min(d[0] for d in temp_dims)
-    min_h = min(d[1] for d in temp_dims)
-    CELL_SIZE = (min_w, min_h) 
+    base_w = Counter(temp_widths).most_common(1)[0][0]
+    base_h = Counter(temp_heights).most_common(1)[0][0]
+    
+    CELL_SIZE = (base_w, base_h)
     print(f"Detected Base Cell Size: {CELL_SIZE}")
 
     for fname, img in images.items():
@@ -238,8 +338,13 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
                 if deficit < 0:
                     pacing_multiplier = math.exp(deficit * 5) 
                 else:
-                    pacing_multiplier = min(1.5, 1.0 + (deficit * 0.1))
-                    # pacing_multiplier = 1.0 + deficit 
+                    percent_behind = deficit / desired_total_count if desired_total_count > 0 else 0
+                    
+                    # Apply a much gentler curve. Max 25% boost (1.25 multiplier)
+                    # This prevents the explosive "rubber band" clumping when reaching the surface.
+                    pacing_multiplier = 1.0 + min(0.25, percent_behind * 0.4)
+                    # pacing_multiplier = min(1.5, 1.0 + (deficit * 0.1))
+                    
 
         final_weight = local_w  * pacing_multiplier
         weights.append(final_weight)
@@ -549,7 +654,7 @@ def render_grid(grid, images, tile_sizes, cell_size, max_entropy=0):
 
 if __name__ == "__main__":
     try:
-        for i in range(1):
+        for i in range(12):
             while os.path.exists(final_path):
                 new_filename = f"{name}{counter}{extension}"
                 final_path = os.path.join(folder, new_filename)
@@ -584,7 +689,7 @@ if __name__ == "__main__":
             
             print(f"Saving to {final_path}...")
             final_img.save(final_path)
-            plot_pacing_graphs(gen_history, col_steps)
+            # plot_pacing_graphs(gen_history, col_steps)
             print("Done!")
         
     except Exception as e:
