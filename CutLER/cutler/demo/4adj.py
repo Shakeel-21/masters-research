@@ -544,7 +544,7 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "Generation/128"
+    base_dir = "Generation/mix"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
@@ -553,7 +553,7 @@ if __name__ == "__main__":
         match_threshold=0.05
     )
     
-    # We only need to tell it the base folder now; it handles the rest!
+
     reconstructor.run_reconstruction(
         base_output_dir=base_dir
     )

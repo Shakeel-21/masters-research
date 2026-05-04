@@ -11,11 +11,11 @@ from PIL import Image, ImageDraw
 from collections import Counter, defaultdict
 
 
-ROOT_DIR = os.path.join("Generation", "128", "mario_2t_data")
+ROOT_DIR = os.path.join("Generation", "mix", "merged_data")
 BASE_DIR = ROOT_DIR
 GRID_WIDTH = 230    
 GRID_HEIGHT = 14   
-TIMEOUT = 30
+TIMEOUT = 10
 
 
 # FRAMES = True
@@ -113,20 +113,17 @@ TILES_DIR = os.path.join(BASE_DIR, "tiles")
 RULES_FILE = os.path.join(BASE_DIR, "adjacency_rules.txt")
 RATIOS_FILE = os.path.join(BASE_DIR, "ratios.json")        
 
-base_output_path = os.path.join(BASE_DIR, "Generations", "new.png")
+base_output_path = os.path.join(BASE_DIR, "Generations", "Pprop.png")
 
 folder = os.path.dirname(base_output_path)
 
-# --- Ensure the frames directory exists! ---
+# --- Ensure the output directory exists! ---
 os.makedirs(folder, exist_ok=True)
 
 filename = os.path.basename(base_output_path)  
 name, extension = os.path.splitext(filename)
 final_path = base_output_path
 counter = 1
-
-
-
 
 
 
@@ -191,9 +188,11 @@ def get_all_tile_names(adjacencies):
 def inject_background_rules(adjacencies, ratios):
     if "B" not in adjacencies:
         adjacencies["B"] = { "top": [], "bottom": [], "left": [], "right": [] }
+    # NEW: Create a rule block for Padding
+    if "P" not in adjacencies:
+        adjacencies["P"] = { "top": [], "bottom": [], "left": [], "right": [] }
 
     inverse_dir = {"top": "bottom", "bottom": "top", "left": "right", "right": "left"}
-    
     sky_weight = 1.0
 
     for d in ["top", "bottom", "left", "right"]:
@@ -201,17 +200,28 @@ def inject_background_rules(adjacencies, ratios):
              adjacencies["B"][d].append(["B", sky_weight])
         if ["P", sky_weight] not in adjacencies["B"][d]:
              adjacencies["B"][d].append(["P", sky_weight])
+             
+        # NEW: P needs to be allowed to touch itself (for corners) and B (for empty sky boundaries)
+        if ["P", sky_weight] not in adjacencies["P"][d]:
+             adjacencies["P"][d].append(["P", sky_weight])
+        if ["B", sky_weight] not in adjacencies["P"][d]:
+             adjacencies["P"][d].append(["B", sky_weight])
 
     for tile_name, rules in adjacencies.items():
-        if tile_name == "B": continue
+        if tile_name in ["B", "P"]: continue
         for direction, neighbors in rules.items():
             for n_name, n_weight in neighbors:
                 if n_name == "B":
                     inv_d = inverse_dir[direction]
                     if not any(n[0] == tile_name for n in adjacencies["B"][inv_d]):
                         adjacencies["B"][inv_d].append([tile_name, n_weight])
+                # NEW: If a tile says it touches P, make P reciprocate!
+                if n_name == "P":
+                    inv_d = inverse_dir[direction]
+                    if not any(n[0] == tile_name for n in adjacencies["P"][inv_d]):
+                        adjacencies["P"][inv_d].append([tile_name, n_weight])
     
-    print("Injected rules for 'B' (Background).")
+    print("Injected rules for 'B' (Background) and 'P' (Padding).")
     return adjacencies
 
 def initialize_grid(height, width, all_tiles):
@@ -219,8 +229,23 @@ def initialize_grid(height, width, all_tiles):
 
 def pad_grid(grid, pad_value="P"):
     width = len(grid[0])
-    new_row = [pad_value] * width
-    grid.append(new_row)
+    
+    # 1. Pad the left and right sides of every existing row
+    for row in grid:
+        row.insert(0, pad_value)   # Left border
+        row.append(pad_value)      # Right border
+        
+    # The width is now 2 tiles wider
+    new_width = width + 2
+    
+    # 2. Create the top and bottom solid rows
+    top_row = [pad_value] * new_width
+    bottom_row = [pad_value] * new_width
+    
+    # 3. Add them to the grid
+    grid.insert(0, top_row)    # Top border (Roof)
+    grid.append(bottom_row)    # Bottom border (Floor)
+    
     return grid
 
 def get_min_entropy_cell(grid, adjacencies):
@@ -229,24 +254,12 @@ def get_min_entropy_cell(grid, adjacencies):
     
     for y in range(len(grid) - 2, -1, -1):
         for x in range(len(grid[0])):
-            if len(grid[y][x]) == 0:
-                return (-1, -1) 
-
             if isinstance(grid[y][x], set):
-                is_above_padding = (y + 1 == len(grid) - 1)
-                if is_above_padding:
-                    filtered = set()
-                    for t in grid[y][x]:
-                        valid_bottoms = [n[0] for n in adjacencies[t]["bottom"]]
-                        if "P" in valid_bottoms:
-                            filtered.add(t)
-                    grid[y][x] = filtered
-                    
-                    if len(grid[y][x]) == 0:
-                        return (-1, -1)
-
                 entropy = len(grid[y][x])
                 
+                if entropy == 0:
+                    return (-1, -1) # Dead end detected!
+                    
                 if 0 < entropy < min_entropy:
                     min_entropy = entropy
                     min_cells = [(y, x)]
@@ -318,8 +331,20 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
         
 
         valid_bottoms = [n[0] for n in adjacencies.get(tile, {}).get("bottom", [])]
-        is_structural = (tile == "B") or ("P" in valid_bottoms)
-
+        valid_tops = [n[0] for n in adjacencies.get(tile, {}).get("top", [])]
+        
+        # Determine if the tile is physically touching the top or bottom padding boundaries
+        height, _ = tile_sizes.get(tile, (1, 1))
+        
+        # y + 1 is the cell below the tile. y - height is the cell directly above the tile.
+        is_against_floor = (y + 1 < len(grid)) and (grid[y + 1][x] == "P")
+        is_against_roof = (y - height >= 0) and (grid[y - height][x] == "P")
+        
+        # It is only exempt from pacing if it is AT the boundary, acting as the boundary layer
+        acts_as_floor = is_against_floor and ("P" in valid_bottoms)
+        acts_as_roof = is_against_roof and ("P" in valid_tops)
+        
+        is_structural = (tile == "B") or acts_as_floor or acts_as_roof
         pacing_multiplier = 1.0
         base_weight = ratios.get(tile, 1.0) 
 
@@ -493,6 +518,11 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
             placements = 0 
             frame_states = [] # <--- NEW: List to hold our successful grid snapshots
             
+            for y in range(len(grid)):
+                for x in range(len(grid[0])):
+                    if grid[y][x] == "P":
+                        propagate(grid, y, x, adjacencies, tile_sizes)
+
             while True:
                 check_timeout(start_time, grid)
                 
@@ -654,7 +684,7 @@ def render_grid(grid, images, tile_sizes, cell_size, max_entropy=0):
 
 if __name__ == "__main__":
     try:
-        for i in range(12):
+        for i in range(5):
             while os.path.exists(final_path):
                 new_filename = f"{name}{counter}{extension}"
                 final_path = os.path.join(folder, new_filename)
