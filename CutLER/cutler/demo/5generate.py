@@ -10,14 +10,14 @@ import numpy as np
 from PIL import Image, ImageDraw
 from collections import Counter, defaultdict
 
-
-ROOT_DIR = os.path.join("Generation", "mix", "merged_data")
-BASE_DIR = ROOT_DIR
+filename="level.png"
+ROOT_DIR = os.path.join("Generation", "all")
 GRID_WIDTH = 230    
 GRID_HEIGHT = 14   
-TIMEOUT = 10
+TIMEOUT = 120
 
-
+DEBUG = False
+MERGE = False
 # FRAMES = True
 FRAMES = False
 
@@ -37,7 +37,6 @@ def merge_wfc_levels(level_paths, output_dir):
     })
 
     for level_path in level_paths:
-        # 1. Process Ratios
         ratio_file = os.path.join(level_path, "ratios.json")
         if os.path.exists(ratio_file):
             with open(ratio_file, 'r') as f:
@@ -45,7 +44,6 @@ def merge_wfc_levels(level_paths, output_dir):
                 for tile, weight in ratios.items():
                     global_ratios[tile] += float(weight)
 
-        # 2. Process Adjacencies
         adj_file = os.path.join(level_path, "adjacency_rules.txt")
         if os.path.exists(adj_file):
             with open(adj_file, 'r') as f:
@@ -55,7 +53,6 @@ def merge_wfc_levels(level_paths, output_dir):
                         for n_name, n_weight in neighbors:
                             global_adj[tile][direction][n_name] += int(n_weight)
 
-        # 3. Copy Tiles
         tiles_dir = os.path.join(level_path, "tiles")
         if os.path.exists(tiles_dir):
             for tile_img in os.listdir(tiles_dir):
@@ -64,18 +61,15 @@ def merge_wfc_levels(level_paths, output_dir):
                 if not os.path.exists(dst_img):
                     shutil.copy2(src_img, dst_img)
 
-    # 4. Average ratios
     for tile in global_ratios:
         global_ratios[tile] = round(global_ratios[tile] / len(level_paths), 2)
 
-    # 5. Format adjacencies back to lists
     final_adj = {}
     for tile, directions in global_adj.items():
         final_adj[tile] = {}
         for d in ["top", "bottom", "left", "right"]:
             final_adj[tile][d] = [[n, w] for n, w in directions[d].items()]
 
-    # 6. Save using standard names so the rest of the script finds them easily
     with open(os.path.join(output_dir, "ratios.json"), 'w') as f:
         json.dump(global_ratios, f, indent=4)
     with open(os.path.join(output_dir, "adjacency_rules.txt"), 'w') as f:
@@ -84,59 +78,13 @@ def merge_wfc_levels(level_paths, output_dir):
     print("Merge complete!\n")
 
 
-
-
-level_folders = []
-if os.path.exists(ROOT_DIR):
-    # 1. Check if ROOT_DIR is ALREADY a valid level folder
-    if os.path.exists(os.path.join(ROOT_DIR, "adjacency_rules.txt")):
-        level_folders.append(ROOT_DIR)
-    else:
-        # 2. Otherwise, scan inside it for level subfolders
-        for item in os.listdir(ROOT_DIR):
-            item_path = os.path.join(ROOT_DIR, item)
-            # Skip the merged folder itself to prevent recursive merging
-            if item == "merged_data" or item == "Generations":
-                continue
-            if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "adjacency_rules.txt")):
-                level_folders.append(item_path)
-
-if len(level_folders) > 1:
-    merged_output_dir = os.path.join(ROOT_DIR, "merged_data")
-    merge_wfc_levels(level_folders, merged_output_dir)
-    BASE_DIR = merged_output_dir  # Override BASE_DIR to point to the merged results
-elif len(level_folders) == 1:
-    BASE_DIR = level_folders[0]
-
-
-TILES_DIR = os.path.join(BASE_DIR, "tiles")
-RULES_FILE = os.path.join(BASE_DIR, "adjacency_rules.txt")
-RATIOS_FILE = os.path.join(BASE_DIR, "ratios.json")        
-
-base_output_path = os.path.join(BASE_DIR, "Generations", "Pprop.png")
-
-folder = os.path.dirname(base_output_path)
-
-# --- Ensure the output directory exists! ---
-os.makedirs(folder, exist_ok=True)
-
-filename = os.path.basename(base_output_path)  
-name, extension = os.path.splitext(filename)
-final_path = base_output_path
-counter = 1
-
-
-
-
-
-def load_data():
-    """Loads images, calculates tile sizes (in grid units), loads rules and ratios."""
+def load_data(rules_file, ratios_file, tiles_dir):
     print("Loading tiles, rules, and global ratios...")
 
-    with open(RULES_FILE, 'r') as f:
+    with open(rules_file, 'r') as f:
         adjacencies = json.load(f)
         
-    with open(RATIOS_FILE, 'r') as f:
+    with open(ratios_file, 'r') as f:
         ratios = json.load(f)
     
     adjacencies = inject_background_rules(adjacencies, ratios)
@@ -145,16 +93,16 @@ def load_data():
     tile_sizes = {} 
     
     valid_extensions = {".png"}
-    found_files = [f for f in os.listdir(TILES_DIR) 
+    found_files = [f for f in os.listdir(tiles_dir) 
                    if os.path.splitext(f)[1].lower() in valid_extensions]
     
     if not found_files:
-        raise FileNotFoundError(f"No images found in {TILES_DIR}!")
+        raise FileNotFoundError(f"No images found in {tiles_dir}!")
 
     temp_widths = []
     temp_heights = []
     for fname in found_files:
-        img_path = os.path.join(TILES_DIR, fname)
+        img_path = os.path.join(tiles_dir, fname)
         img = Image.open(img_path).convert("RGBA")
         images[fname] = img
         temp_widths.append(img.size[0]) 
@@ -176,7 +124,6 @@ def load_data():
 
     return adjacencies, ratios, images, tile_sizes, CELL_SIZE
 
-# Direction Mapping: 0:Top, 1:Bottom, 2:Left, 3:Right
 DIR_MAP = {0: "top", 1: "bottom", 2: "left", 3: "right"}
 
 def get_all_tile_names(adjacencies):
@@ -188,7 +135,6 @@ def get_all_tile_names(adjacencies):
 def inject_background_rules(adjacencies, ratios):
     if "B" not in adjacencies:
         adjacencies["B"] = { "top": [], "bottom": [], "left": [], "right": [] }
-    # NEW: Create a rule block for Padding
     if "P" not in adjacencies:
         adjacencies["P"] = { "top": [], "bottom": [], "left": [], "right": [] }
 
@@ -201,7 +147,6 @@ def inject_background_rules(adjacencies, ratios):
         if ["P", sky_weight] not in adjacencies["B"][d]:
              adjacencies["B"][d].append(["P", sky_weight])
              
-        # NEW: P needs to be allowed to touch itself (for corners) and B (for empty sky boundaries)
         if ["P", sky_weight] not in adjacencies["P"][d]:
              adjacencies["P"][d].append(["P", sky_weight])
         if ["B", sky_weight] not in adjacencies["P"][d]:
@@ -215,7 +160,6 @@ def inject_background_rules(adjacencies, ratios):
                     inv_d = inverse_dir[direction]
                     if not any(n[0] == tile_name for n in adjacencies["B"][inv_d]):
                         adjacencies["B"][inv_d].append([tile_name, n_weight])
-                # NEW: If a tile says it touches P, make P reciprocate!
                 if n_name == "P":
                     inv_d = inverse_dir[direction]
                     if not any(n[0] == tile_name for n in adjacencies["P"][inv_d]):
@@ -229,23 +173,16 @@ def initialize_grid(height, width, all_tiles):
 
 def pad_grid(grid, pad_value="P"):
     width = len(grid[0])
-    
-    # 1. Pad the left and right sides of every existing row
     for row in grid:
-        row.insert(0, pad_value)   # Left border
-        row.append(pad_value)      # Right border
+        row.insert(0, pad_value)
+        row.append(pad_value)
         
-    # The width is now 2 tiles wider
     new_width = width + 2
-    
-    # 2. Create the top and bottom solid rows
     top_row = [pad_value] * new_width
     bottom_row = [pad_value] * new_width
     
-    # 3. Add them to the grid
-    grid.insert(0, top_row)    # Top border (Roof)
-    grid.append(bottom_row)    # Bottom border (Floor)
-    
+    grid.insert(0, top_row)
+    grid.append(bottom_row)
     return grid
 
 def get_min_entropy_cell(grid, adjacencies):
@@ -258,7 +195,7 @@ def get_min_entropy_cell(grid, adjacencies):
                 entropy = len(grid[y][x])
                 
                 if entropy == 0:
-                    return (-1, -1) # Dead end detected!
+                    return (-1, -1) 
                     
                 if 0 < entropy < min_entropy:
                     min_entropy = entropy
@@ -271,36 +208,29 @@ def get_min_entropy_cell(grid, adjacencies):
     
     return None
 
-def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
+def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, state, total_roof_weight, total_floor_weight):
     possible_tiles = list(grid[y][x])    
     if not possible_tiles: return None
 
-    current_counts = {t: 0 for t in ratios.keys()}
-    collapsed_count = 0   
-    for row in grid:
-        for cell in row:
-            if isinstance(cell, str) and cell in current_counts:
-                current_counts[cell] += 1
-                collapsed_count += 1   
-
     total_grid_cells = len(grid) * len(grid[0])
-    total_ratio_sum = sum(ratios.values())
-    if total_ratio_sum == 0: total_ratio_sum = 1
+    total_ratio_sum = sum(ratios.values()) or 1
 
-    progress_ratio = collapsed_count / total_grid_cells
+    progress_ratio = state['collapsed_count'] / total_grid_cells
     for t in ratios.keys():
         target_ratio = ratios.get(t, 1.0) / total_ratio_sum
         desired_total = target_ratio * total_grid_cells
         ideal_current = desired_total * progress_ratio
         
-        history[t]['actual'].append(current_counts.get(t, 0))
+        history[t]['actual'].append(state['current'].get(t, 0))
         history[t]['ideal'].append(ideal_current)
     
-    steps.append(collapsed_count)
+    steps.append(state['collapsed_count'])
 
     weights = []
+    legal_indices = [] 
+    playable_width = len(grid[0]) - 2 
 
-    for tile in possible_tiles:
+    for i, tile in enumerate(possible_tiles):
         directional_probs = []
         is_illegal = False
 
@@ -322,41 +252,55 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
         if is_illegal:
             weights.append(0.0)
             continue
-
+            
+        legal_indices.append(i)
         
         base_ratio_weight = ratios.get(tile, 1.0) / total_ratio_sum
         local_w = base_ratio_weight
         for p in directional_probs:
             local_w *= p
         
+        allowed_bottoms = adjacencies.get(tile, {}).get("bottom", [])
+        allowed_tops = adjacencies.get(tile, {}).get("top", [])
+        
+        valid_bottoms = [n[0] for n in allowed_bottoms]
+        valid_tops = [n[0] for n in allowed_tops]
 
-        valid_bottoms = [n[0] for n in adjacencies.get(tile, {}).get("bottom", [])]
-        valid_tops = [n[0] for n in adjacencies.get(tile, {}).get("top", [])]
-        
-        # Determine if the tile is physically touching the top or bottom padding boundaries
         height, _ = tile_sizes.get(tile, (1, 1))
-        
-        # y + 1 is the cell below the tile. y - height is the cell directly above the tile.
         is_against_floor = (y + 1 < len(grid)) and (grid[y + 1][x] == "P")
         is_against_roof = (y - height >= 0) and (grid[y - height][x] == "P")
         
-        # It is only exempt from pacing if it is AT the boundary, acting as the boundary layer
         acts_as_floor = is_against_floor and ("P" in valid_bottoms)
-        acts_as_roof = is_against_roof and ("P" in valid_tops)
+        acts_as_roof = is_against_roof and ("P" in valid_tops) 
         
-        is_structural = (tile == "B") or acts_as_floor or acts_as_roof
+        is_structural = False
+            
+        if acts_as_roof:
+            my_roof_weight = next((w for n, w in allowed_tops if n == "P"), 0)
+            target_roof_count = (my_roof_weight / total_roof_weight) * playable_width
+            
+            if state['roof'].get(tile, 0) < target_roof_count:
+                is_structural = True
+                
+        elif acts_as_floor:
+            my_floor_weight = next((w for n, w in allowed_bottoms if n == "P"), 0)
+            target_floor_count = (my_floor_weight / total_floor_weight) * playable_width
+            
+            if state['floor'].get(tile, 0) < target_floor_count:
+                is_structural = True
+
         pacing_multiplier = 1.0
         base_weight = ratios.get(tile, 1.0) 
 
         if not is_structural:
             target_ratio = base_weight / total_ratio_sum
             desired_total_count = target_ratio * total_grid_cells
-            actual_count = current_counts.get(tile, 0)
+            actual_count = state['current'].get(tile, 0)
             
             if actual_count >= desired_total_count:
-                pacing_multiplier = 0.0 
+                pacing_multiplier = 0.0
             else:
-                progress_ratio = collapsed_count / total_grid_cells
+                progress_ratio = state['collapsed_count'] / total_grid_cells
                 ideal_current_count = desired_total_count * progress_ratio
                 deficit = ideal_current_count - actual_count
                 
@@ -364,26 +308,29 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
                     pacing_multiplier = math.exp(deficit * 5) 
                 else:
                     percent_behind = deficit / desired_total_count if desired_total_count > 0 else 0
-                    
-                    # Apply a much gentler curve. Max 25% boost (1.25 multiplier)
-                    # This prevents the explosive "rubber band" clumping when reaching the surface.
                     pacing_multiplier = 1.0 + min(0.25, percent_behind * 0.4)
-                    # pacing_multiplier = min(1.5, 1.0 + (deficit * 0.1))
-                    
 
         final_weight = local_w  * pacing_multiplier
         weights.append(final_weight)
 
     total_weight = sum(weights)
+    
     if total_weight > 0:
         weights = [w / total_weight for w in weights]
+        chosen_tile = random.choices(possible_tiles, weights=weights, k=1)[0]
     else:
-        if "B" in possible_tiles:
-            return "B"
-        weights = [1.0 / len(possible_tiles)] * len(possible_tiles)
+        if not legal_indices:
+            return None 
+            
+        legal_names = [possible_tiles[i] for i in legal_indices]
+        if "B" in legal_names:
+            chosen_tile = "B"
+        else:
+            fallback_weights = [0.0] * len(possible_tiles)
+            for i in legal_indices:
+                fallback_weights[i] = 1.0 / len(legal_indices)
+            chosen_tile = random.choices(possible_tiles, weights=fallback_weights, k=1)[0]
 
-
-    chosen_tile = random.choices(possible_tiles, weights=weights, k=1)[0]
     height, width = tile_sizes.get(chosen_tile, (1, 1))
 
     if (y - height + 1 < 0) or (x + width > len(grid[0])):      
@@ -404,14 +351,29 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps):
         for dy in range(height):
             for dx in range(width):
                 grid[y-dy][x+dx] = chosen_tile
+                
+        cells_covered = height * width
+        
+        if chosen_tile in state['current']:
+            state['current'][chosen_tile] += cells_covered
+            state['collapsed_count'] += cells_covered
+            
+            if y - height == 0:  
+                state['roof'][chosen_tile] += width 
+            if y + 1 == len(grid) - 1:
+                state['floor'][chosen_tile] += width 
+
         return chosen_tile   
 
     return None
 
 def propagate(grid, y, x, adjacencies, tile_sizes):
     stack = [(y, x)]
+    in_stack = {(y, x)}
+    
     while stack:
         cy, cx = stack.pop()
+        in_stack.remove((cy, cx))
         cell_contents = grid[cy][cx]
         
         if isinstance(cell_contents, str):
@@ -435,8 +397,10 @@ def propagate(grid, y, x, adjacencies, tile_sizes):
                         direction = get_direction(ny, nx, y_top, y_bottom, x_left, x_right)
                         if direction is not None:
                             updated = update_cell(grid, ny, nx, cy, cx, direction, adjacencies)
-                            if updated:
+                            
+                            if updated and (ny, nx) not in in_stack:
                                 stack.append((ny, nx))
+                                in_stack.add((ny, nx))
 
 def update_cell(grid, target_y, target_x, source_y, source_x, direction, adjacencies):
     original_len = len(grid[target_y][target_x])
@@ -500,8 +464,11 @@ class RetryException(Exception):
     def __init__(self, grid):
         self.grid = grid
 
-# Pass FRAMES in so the function knows whether to record states
-def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout): 
+class MaxRetriesException(Exception):
+    def __init__(self, grid):
+        self.grid = grid
+
+def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, images=None, cell_size=None): 
     all_tiles = get_all_tile_names(adjacencies)
     
     def check_timeout(start_t, current_grid):
@@ -516,12 +483,25 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
             collapse_steps = []
             
             placements = 0 
-            frame_states = [] # <--- NEW: List to hold our successful grid snapshots
+            frame_states = [] 
+
+            state = {
+                'current': {t: 0 for t in ratios.keys()},
+                'roof': {t: 0 for t in ratios.keys()},
+                'floor': {t: 0 for t in ratios.keys()},
+                'collapsed_count': 0
+            }
             
-            for y in range(len(grid)):
-                for x in range(len(grid[0])):
-                    if grid[y][x] == "P":
-                        propagate(grid, y, x, adjacencies, tile_sizes)
+            total_roof_weight = sum(next((w for n, w in rules.get("top", []) if n == "P"), 0) for rules in adjacencies.values()) or 1
+            total_floor_weight = sum(next((w for n, w in rules.get("bottom", []) if n == "P"), 0) for rules in adjacencies.values()) or 1
+            
+            h = len(grid)
+            w = len(grid[0])
+            for x in range(w):
+                if grid[0][x] == "P": 
+                    propagate(grid, 0, x, adjacencies, tile_sizes)       
+                if grid[h-1][x] == "P": 
+                    propagate(grid, h-1, x, adjacencies, tile_sizes)
 
             while True:
                 check_timeout(start_time, grid)
@@ -532,27 +512,24 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
                     raise RetryException(grid)
 
                 if cell is None:
-                    # Level finished successfully!
                     break 
                 
                 y, x = cell
                 
                 if isinstance(grid[y][x], str): continue
                     
-                tile = collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, generation_history, collapse_steps)
+                tile = collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, generation_history, collapse_steps, state, total_roof_weight, total_floor_weight)
                 
                 if tile is not None:
                     propagate(grid, y, x, adjacencies, tile_sizes)
                     
-                    # --- NEW LOGIC: Save a text snapshot, not an image! ---
                     placements += 1
                     if FRAMES and placements % 50 == 0:
-                        # deepcopy ensures we don't accidentally link to the original sets
                         frame_states.append(copy.deepcopy(grid)) 
                         
                 else:
                     print(f"Dead end at {y},{x}. Restarting...")
-                    raise RetryException(grid) # This throws away frame_states!
+                    raise RetryException(grid)
             
             final_grid = []
             for row in grid:
@@ -564,7 +541,6 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
                         new_row.append("B") 
                 final_grid.append(new_row)
                 
-            # --- Return frame_states at the end! ---
             return np.array(final_grid), generation_history, collapse_steps, frame_states
 
     attempts = 0
@@ -573,9 +549,31 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout):
         try:
             return generate_level_attempt(height, width)
         except RetryException as e:
+            if attempts >= 5:
+                print(f"Encountered 5 dead ends. Aborting this generation...")
+                raise MaxRetriesException(e.grid)
+                
+            if DEBUG and images and cell_size:
+                print(f"Dead End (Attempt {attempts}/5). Close the image window to continue...")
+                debug_img = render_grid(e.grid, images, tile_sizes, cell_size, max_entropy=len(all_tiles))
+                plt.figure(figsize=(12, 6))
+                plt.imshow(debug_img)
+                plt.title(f"Dead End - Attempt {attempts}/5")
+                plt.axis('off')
+                plt.show() 
             continue
         except TimeoutException as e:
-            continue
+            print(f"Timeout reached on attempt {attempts}! Aborting current generation...")
+            if DEBUG and images and cell_size:
+                print(f"Timeout (Attempt {attempts}). Close the image window to continue...")
+                debug_img = render_grid(e.grid, images, tile_sizes, cell_size, max_entropy=len(all_tiles))
+                
+                plt.figure(figsize=(12, 6))
+                plt.imshow(debug_img)
+                plt.title(f"Timeout - Attempt {attempts}")
+                plt.axis('off')
+                plt.show()
+            raise e 
 
 def plot_pacing_graphs(history, steps):
     num_tiles = len(history)
@@ -619,8 +617,6 @@ def render_grid(grid, images, tile_sizes, cell_size, max_entropy=0):
     img_h = rows * ch
     
     canvas = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
-    
-    # --- NEW: Create a transparent overlay for the heatmap ---
     heatmap_overlay = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
     draw = None
     if max_entropy > 0:
@@ -632,19 +628,12 @@ def render_grid(grid, images, tile_sizes, cell_size, max_entropy=0):
         for x in range(cols):
             tile_name = grid[y][x]
 
-            # --- NEW LOGIC: Draw Heatmap for uncollapsed sets ---
             if isinstance(tile_name, set): 
                 if draw and len(tile_name) > 0:
                     entropy = len(tile_name)
-                    
-                    # Normalize entropy from 0.0 (hottest/fewest options) to 1.0 (coldest/most options)
                     normalized = min(1.0, max(0.0, (entropy - 1) / (max_entropy - 1))) if max_entropy > 1 else 0
-                    
-                    # Colors: Hot = Red (255, 0, 0), Cold = Blue (0, 0, 255)
                     r = int(255 * (1 - normalized))
                     b = int(255 * normalized)
-                    
-                    # Opacity: Hot/Red is dark (200), Cold/Blue is faint (40)
                     alpha = int(40 + 160 * (1 - normalized)) 
                     
                     px = x * cw
@@ -652,7 +641,6 @@ def render_grid(grid, images, tile_sizes, cell_size, max_entropy=0):
                     draw.rectangle([px, py, px + cw, py + ch], fill=(r, 0, b, alpha))
                 continue 
 
-            # Draw normal collapsed tiles
             if tile_name in ["B", "P"]: continue
             if tile_name not in images: continue
             if (x, y) in covered_cells: continue
@@ -676,51 +664,102 @@ def render_grid(grid, images, tile_sizes, cell_size, max_entropy=0):
                     if not isinstance(grid[target_y][target_x], set) and grid[target_y][target_x] == tile_name:
                         covered_cells.add((target_x, target_y))
 
-    # --- Apply the heatmap overlay on top of the tiles ---
     if max_entropy > 0:
         canvas.alpha_composite(heatmap_overlay)
 
     return canvas
 
 if __name__ == "__main__":
-    try:
-        for i in range(5):
-            while os.path.exists(final_path):
-                new_filename = f"{name}{counter}{extension}"
-                final_path = os.path.join(folder, new_filename)
-                counter += 1
-            adj, ratios, imgs, sizes, c_size = load_data() 
-            
-            # Calculate max possible entropy to calibrate the heatmap colors
-            max_possible_entropy = len(get_all_tile_names(adj))
-            
-            print("Generating grid...")
-            current_run_name = f"{name}{counter if counter > 1 else ''}" 
-            
+    level_folders = []
+    if os.path.exists(ROOT_DIR):
+        if os.path.exists(os.path.join(ROOT_DIR, "adjacency_rules.txt")):
+            level_folders.append(ROOT_DIR)
+        else:
+            for item in os.listdir(ROOT_DIR):
+                item_path = os.path.join(ROOT_DIR, item)
+                if item == "merged_data" or item == "Generations":
+                    continue
+                if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "adjacency_rules.txt")):
+                    level_folders.append(item_path)
 
-            final_grid_data, gen_history, col_steps, frame_states = generate_level(
-                GRID_HEIGHT, GRID_WIDTH, adj, ratios, sizes, TIMEOUT
-            ) 
-            
-            # --- Render the frames with the Heatmap turned ON ---
-            if FRAMES and frame_states:
-                print(f"Level generated successfully! Rendering {len(frame_states)} frames with heatmap...")
-                for i, state_grid in enumerate(frame_states):
-                    step_num = (i + 1) * 50
-                    # Pass max_possible_entropy to trigger the heatmap
-                    temp_img = render_grid(state_grid, imgs, sizes, c_size, max_entropy=max_possible_entropy)
-                    frame_filename = f"{current_run_name}_step_{step_num:04d}.png"
-                    frame_path = os.path.join(folder, frame_filename)
-                    temp_img.save(frame_path)
-            
-            print("Rendering final image...")
-            # Pass 0 to max_entropy so the final image has no heatmap overlay
-            final_img = render_grid(final_grid_data, imgs, sizes, c_size, max_entropy=0)
-            
-            print(f"Saving to {final_path}...")
-            final_img.save(final_path)
-            # plot_pacing_graphs(gen_history, col_steps)
-            print("Done!")
+    if MERGE and len(level_folders) > 1:
+        merged_output_dir = os.path.join(ROOT_DIR, "merged_data")
+        merge_wfc_levels(level_folders, merged_output_dir)
+        target_folders = [merged_output_dir]
+    else:
+        target_folders = level_folders
+
+    for base_dir in target_folders:
+        print(f"\n--- Processing Directory: {base_dir} ---")
         
-    except Exception as e:
-        print(f"Error: {e}")
+        TILES_DIR = os.path.join(base_dir, "tiles")
+        RULES_FILE = os.path.join(base_dir, "adjacency_rules.txt")
+        RATIOS_FILE = os.path.join(base_dir, "ratios.json")        
+
+        base_output_path = os.path.join(base_dir, "Generations", filename)
+        folder = os.path.dirname(base_output_path)
+        os.makedirs(folder, exist_ok=True)
+
+        out_filename = os.path.basename(base_output_path)  
+        name, extension = os.path.splitext(out_filename)
+        final_path = base_output_path
+        counter = 1
+        
+        try:
+            for i in range(1):
+                while os.path.exists(final_path):
+                    new_filename = f"{name}{counter}{extension}"
+                    final_path = os.path.join(folder, new_filename)
+                    counter += 1
+                
+                adj, ratios, imgs, sizes, c_size = load_data(RULES_FILE, RATIOS_FILE, TILES_DIR) 
+                
+                max_possible_entropy = len(get_all_tile_names(adj))
+                
+                print("Generating grid...")
+                current_run_name = f"{name}{counter if counter > 1 else ''}" 
+                
+                final_grid_data, gen_history, col_steps, frame_states = generate_level(
+                    GRID_HEIGHT, GRID_WIDTH, adj, ratios, sizes, TIMEOUT, imgs, c_size
+                )
+                
+                if FRAMES and frame_states:
+                    print(f"Level generated successfully! Rendering {len(frame_states)} frames with heatmap...")
+                    for i, state_grid in enumerate(frame_states):
+                        step_num = (i + 1) * 50
+                        temp_img = render_grid(state_grid, imgs, sizes, c_size, max_entropy=max_possible_entropy)
+                        frame_filename = f"{current_run_name}_step_{step_num:04d}.png"
+                        frame_path = os.path.join(folder, frame_filename)
+                        temp_img.save(frame_path)
+                
+                print("Rendering final image...")
+                final_img = render_grid(final_grid_data, imgs, sizes, c_size, max_entropy=0)
+                
+                print(f"Saving to {final_path}...")
+                final_img.save(final_path)
+                print("Done processing folder!")
+            
+        except TimeoutException as e:
+            print(f"Generation timed out for {base_dir}. Saving debug image and skipping to the next folder...")
+            ent = len(get_all_tile_names(adj)) if 'adj' in locals() else 0
+            debug_img = render_grid(e.grid, imgs, sizes, c_size, max_entropy=ent)
+            debug_filename = f"failed_timeout_{name}{counter}{extension}"
+            debug_path = os.path.join(folder, debug_filename)
+            debug_img.save(debug_path)
+            print(f"Saved timeout debug state to {debug_path}.")
+            continue
+        except MaxRetriesException as e:
+            print(f"Max retries (5) reached for {base_dir}. Saving debug image and skipping to the next folder...")
+            # Use max_possible_entropy logic from above if it was loaded, else default back to 0
+            ent = len(get_all_tile_names(adj)) if 'adj' in locals() else 0
+            debug_img = render_grid(e.grid, imgs, sizes, c_size, max_entropy=ent)
+            debug_filename = f"failed_deadend_{name}{counter}{extension}"
+            debug_path = os.path.join(folder, debug_filename)
+            debug_img.save(debug_path)
+            print(f"Saved dead-end debug state to {debug_path}.")
+            continue
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Error in {base_dir}: {e}")
+            continue

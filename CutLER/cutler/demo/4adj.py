@@ -230,17 +230,35 @@ class LevelReconstructor:
                             visited_mask[y:y + t_h, x:x + t_w][alpha_mask] = True
 
                             # Register ID and Adjacency using the strictly grid-aligned halves
-                            l_alpha = left_bgra[:, :, 3] > 127
-                            if np.any(l_alpha):
-                                id_grid[y:y + t_h, grid_x_left:grid_x_left + self.cell_w][l_alpha] = left_key
-                                placed_instances.append((left_key, grid_x_left, y, self.cell_w, t_h))
+                            # 1. Safely slice and assign the LEFT HALF
+                            l_start_x = max(0, grid_x_left)
+                            l_end_x = min(w, grid_x_left + self.cell_w)
+                            l_vis_w = l_end_x - l_start_x
+                            
+                            if l_vis_w > 0:
+                                # If it fell off the left edge, we must trim the mask too
+                                l_mask_start = 0 if grid_x_left >= 0 else -grid_x_left
+                                l_mask_end = l_mask_start + l_vis_w
                                 
-                            max_w = min(self.cell_w, w - grid_x_right) 
-                            if max_w > 0:
-                                r_alpha = right_bgra[:, :max_w, 3] > 127
+                                l_alpha = left_bgra[:, l_mask_start:l_mask_end, 3] > 127
+                                if np.any(l_alpha):
+                                    id_grid[y:y + t_h, l_start_x:l_end_x][l_alpha] = left_key
+                                    placed_instances.append((left_key, grid_x_left, y, self.cell_w, t_h))
+                                    
+                            # 2. Safely slice and assign the RIGHT HALF
+                            r_start_x = max(0, grid_x_right)
+                            r_end_x = min(w, grid_x_right + self.cell_w)
+                            r_vis_w = r_end_x - r_start_x
+                            
+                            if r_vis_w > 0:
+                                # If it fell off the left edge (rare for right half, but safe), trim the mask
+                                r_mask_start = 0 if grid_x_right >= 0 else -grid_x_right
+                                r_mask_end = r_mask_start + r_vis_w
+                                
+                                r_alpha = right_bgra[:, r_mask_start:r_mask_end, 3] > 127
                                 if np.any(r_alpha):
-                                    id_grid[y:y + t_h, grid_x_right:grid_x_right + max_w][r_alpha] = right_key
-                                    placed_instances.append((right_key, grid_x_right, y, max_w, t_h))
+                                    id_grid[y:y + t_h, r_start_x:r_end_x][r_alpha] = right_key
+                                    placed_instances.append((right_key, grid_x_right, y, self.cell_w, t_h))
                             
                         else:
                             overlap_heatmap[y:y + t_h, x:x + t_w][alpha_mask] += 1
@@ -291,11 +309,11 @@ class LevelReconstructor:
         cv2.imwrite(str(output_file_path), blank_grid)
 
         # NEW: Output Overlap Visualization (Red Overlay)
-        overlap_overlay = blank_grid.copy()
-        red_mask = overlap_heatmap > 1
-        overlap_overlay[red_mask] = [0, 0, 255, 255] # Red with full alpha
-        overlap_file_path = self.output_path / f"{level_stem}_overlaps.png"
-        cv2.imwrite(str(overlap_file_path), overlap_overlay)
+        # overlap_overlay = blank_grid.copy()
+        # red_mask = overlap_heatmap > 1
+        # overlap_overlay[red_mask] = [0, 0, 255, 255] # Red with full alpha
+        # overlap_file_path = self.output_path / f"{level_stem}_overlaps.png"
+        # cv2.imwrite(str(overlap_file_path), overlap_overlay)
         
         self._extract_neighbors_from_grid(placed_instances, id_grid, h, w)
 
@@ -544,7 +562,7 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "Generation/mix"
+    base_dir = "output_segments/1TestNorm05"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
@@ -555,5 +573,5 @@ if __name__ == "__main__":
     
 
     reconstructor.run_reconstruction(
-        base_output_dir=base_dir
+        base_output_dir="Generation/all"
     )
