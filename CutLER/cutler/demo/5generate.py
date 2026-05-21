@@ -11,10 +11,10 @@ from PIL import Image, ImageDraw
 from collections import Counter, defaultdict
 
 filename="level.png"
-ROOT_DIR = os.path.join("Generation", "all")
+ROOT_DIR = os.path.join("Generation", "mixedSizes")
 GRID_WIDTH = 230    
 GRID_HEIGHT = 14   
-TIMEOUT = 120
+TIMEOUT = 10
 
 DEBUG = False
 MERGE = False

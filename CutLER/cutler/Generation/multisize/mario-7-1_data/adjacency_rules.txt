@@ -1,0 +1,586 @@
+{
+    "mario-3-1_seg_1.png": {
+        "top": [
+            [
+                "mario-5-1_seg_32.png",
+                3
+            ],
+            [
+                "mario-3-1_seg_19.png",
+                1
+            ],
+            [
+                "mario-2-1_seg_53.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                7
+            ]
+        ],
+        "left": [
+            [
+                "P",
+                1
+            ],
+            [
+                "mario-7-1_seg_25.png",
+                1
+            ],
+            [
+                "mario-5-1_seg_32.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-5-1_seg_32.png",
+                1
+            ]
+        ]
+    },
+    "mario-7-1_seg_25.png": {
+        "top": [
+            [
+                "mario-3-1_seg_19.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                6
+            ]
+        ],
+        "left": [
+            [
+                "mario-7-1_seg_45.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "P",
+                1
+            ],
+            [
+                "mario-3-1_seg_1.png",
+                1
+            ],
+            [
+                "mario-7-1_seg_45.png",
+                1
+            ]
+        ]
+    },
+    "mario-7-1_seg_45.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                3
+            ]
+        ],
+        "left": [
+            [
+                "mario-7-1_seg_25.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-7-1_seg_25.png",
+                1
+            ]
+        ]
+    },
+    "mario-3-1_seg_19.png": {
+        "top": [
+            [
+                "B",
+                5
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-7-1_seg_25.png",
+                1
+            ],
+            [
+                "mario-3-1_seg_1.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                5
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                4
+            ]
+        ]
+    },
+    "split_L_mario_3t_seg_5.png": {
+        "top": [
+            [
+                "B",
+                5
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                5
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                6
+            ],
+            [
+                "split_R_mario-1-1_seg_0.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "split_R_mario_3t_seg_5.png",
+                7
+            ],
+            [
+                "mario-7-1_seg_36.png",
+                1
+            ]
+        ]
+    },
+    "split_R_mario_3t_seg_5.png": {
+        "top": [
+            [
+                "B",
+                6
+            ],
+            [
+                "mario-7-1_seg_36.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-1-1_seg_5.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "split_L_mario_3t_seg_5.png",
+                7
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                5
+            ],
+            [
+                "mario-7-1_seg_36.png",
+                1
+            ]
+        ]
+    },
+    "split_L_mario-1-1_seg_0.png": {
+        "top": [
+            [
+                "B",
+                25
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                23
+            ],
+            [
+                "mario-1-1_seg_22.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                11
+            ],
+            [
+                "split_L_mario-1-1_seg_0.png",
+                7
+            ]
+        ],
+        "right": [
+            [
+                "split_R_mario-1-1_seg_0.png",
+                25
+            ],
+            [
+                "split_L_mario-1-1_seg_0.png",
+                7
+            ]
+        ]
+    },
+    "split_R_mario-1-1_seg_0.png": {
+        "top": [
+            [
+                "B",
+                25
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                25
+            ]
+        ],
+        "left": [
+            [
+                "split_L_mario-1-1_seg_0.png",
+                25
+            ],
+            [
+                "split_R_mario-1-1_seg_0.png",
+                7
+            ]
+        ],
+        "right": [
+            [
+                "split_R_mario-1-1_seg_0.png",
+                7
+            ],
+            [
+                "split_L_mario_3t_seg_5.png",
+                1
+            ]
+        ]
+    },
+    "mario-1-1_seg_22.png": {
+        "top": [
+            [
+                "split_L_mario-1-1_seg_0.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "mario-7-1_seg_36.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "split_R_mario_3t_seg_5.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "split_L_mario_3t_seg_5.png",
+                1
+            ],
+            [
+                "split_R_mario_3t_seg_5.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "mario-5-1_seg_32.png": {
+        "top": [
+            [
+                "mario-5-1_seg_32.png",
+                14
+            ],
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-5-1_seg_32.png",
+                14
+            ],
+            [
+                "mario-3-1_seg_1.png",
+                3
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                11
+            ],
+            [
+                "mario-5-1_seg_32.png",
+                6
+            ],
+            [
+                "mario-3-1_seg_1.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-5-1_seg_32.png",
+                6
+            ],
+            [
+                "B",
+                4
+            ],
+            [
+                "mario-3-1_seg_1.png",
+                1
+            ]
+        ]
+    },
+    "mario-2-1_seg_53.png": {
+        "top": [
+            [
+                "B",
+                1
+            ],
+            [
+                "mario-1-1_seg_5.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                1
+            ],
+            [
+                "mario-3-1_seg_1.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                2
+            ]
+        ]
+    },
+    "mario-1-1_seg_5.png": {
+        "top": [
+            [
+                "B",
+                3
+            ],
+            [
+                "split_R_mario_3t_seg_5.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                4
+            ],
+            [
+                "mario-2-1_seg_53.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "mario-1-1_seg_5.png",
+                3
+            ],
+            [
+                "B",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-1-1_seg_5.png",
+                3
+            ],
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "B": {
+        "top": [
+            [
+                "split_R_mario-1-1_seg_0.png",
+                25
+            ],
+            [
+                "split_L_mario-1-1_seg_0.png",
+                23
+            ],
+            [
+                "split_L_mario_3t_seg_5.png",
+                5
+            ],
+            [
+                "mario-1-1_seg_5.png",
+                4
+            ],
+            [
+                "mario-1-1_seg_22.png",
+                1
+            ],
+            [
+                "mario-2-1_seg_53.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "split_L_mario-1-1_seg_0.png",
+                25
+            ],
+            [
+                "split_R_mario-1-1_seg_0.png",
+                25
+            ],
+            [
+                "split_R_mario_3t_seg_5.png",
+                6
+            ],
+            [
+                "mario-3-1_seg_19.png",
+                5
+            ],
+            [
+                "split_L_mario_3t_seg_5.png",
+                5
+            ],
+            [
+                "mario-1-1_seg_5.png",
+                3
+            ],
+            [
+                "mario-7-1_seg_45.png",
+                1
+            ],
+            [
+                "mario-7-1_seg_36.png",
+                1
+            ],
+            [
+                "mario-5-1_seg_32.png",
+                1
+            ],
+            [
+                "mario-2-1_seg_53.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "split_R_mario_3t_seg_5.png",
+                5
+            ],
+            [
+                "mario-3-1_seg_19.png",
+                4
+            ],
+            [
+                "mario-5-1_seg_32.png",
+                4
+            ],
+            [
+                "mario-2-1_seg_53.png",
+                2
+            ],
+            [
+                "mario-1-1_seg_22.png",
+                1
+            ],
+            [
+                "mario-7-1_seg_36.png",
+                1
+            ],
+            [
+                "mario-1-1_seg_5.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "split_L_mario-1-1_seg_0.png",
+                11
+            ],
+            [
+                "mario-5-1_seg_32.png",
+                11
+            ],
+            [
+                "split_L_mario_3t_seg_5.png",
+                6
+            ],
+            [
+                "mario-3-1_seg_19.png",
+                5
+            ],
+            [
+                "mario-2-1_seg_53.png",
+                2
+            ],
+            [
+                "mario-1-1_seg_22.png",
+                1
+            ],
+            [
+                "mario-1-1_seg_5.png",
+                1
+            ]
+        ]
+    }
+}

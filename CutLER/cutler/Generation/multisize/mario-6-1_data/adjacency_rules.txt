@@ -1,0 +1,810 @@
+{
+    "split_L_mario_8_seg_16.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ]
+        ]
+    },
+    "split_L_mario-6-1_seg_35.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ]
+        ]
+    },
+    "mario-5-1_seg_37.png": {
+        "top": [
+            [
+                "split_L_mario-5-1_seg_32.png",
+                6
+            ],
+            [
+                "B",
+                2
+            ],
+            [
+                "split_R_mario-5-1_seg_32.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-6-1_seg_46.png",
+                4
+            ],
+            [
+                "P",
+                3
+            ],
+            [
+                "split_L_mario-5-1_seg_32.png",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "mario-6-1_seg_46.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "split_L_mario-5-1_seg_32.png",
+                4
+            ],
+            [
+                "split_R_mario-5-1_seg_32.png",
+                4
+            ],
+            [
+                "mario-6-1_seg_46.png",
+                2
+            ]
+        ]
+    },
+    "split_L_mario-6-1_seg_46.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                1
+            ],
+            [
+                "mario_3t_seg_5.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "P",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ],
+            [
+                "mario_3t_seg_5.png",
+                1
+            ],
+            [
+                "split_R_mario-6-1_seg_46.png",
+                1
+            ]
+        ]
+    },
+    "split_R_mario-6-1_seg_46.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                1
+            ],
+            [
+                "mario_3t_seg_5.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "P",
+                1
+            ],
+            [
+                "split_L_mario-6-1_seg_46.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ],
+            [
+                "mario_3t_seg_5.png",
+                1
+            ]
+        ]
+    },
+    "mario-6-1_seg_46.png": {
+        "top": [
+            [
+                "B",
+                62
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                12
+            ],
+            [
+                "split_R_mario-5-1_seg_32.png",
+                8
+            ],
+            [
+                "split_L_mario-5-1_seg_32.png",
+                7
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                4
+            ],
+            [
+                "split_L_mario_8_seg_16.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                99
+            ],
+            [
+                "mario_3t_seg_5.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "mario-6-1_seg_46.png",
+                89
+            ],
+            [
+                "B",
+                3
+            ],
+            [
+                "mario_3t_seg_5.png",
+                2
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                2
+            ],
+            [
+                "split_R_mario-6-1_seg_46.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                1
+            ],
+            [
+                "split_L_mario_8_seg_16.png",
+                1
+            ],
+            [
+                "split_L_mario-6-1_seg_35.png",
+                1
+            ],
+            [
+                "split_L_mario-6-1_seg_46.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-6-1_seg_46.png",
+                89
+            ],
+            [
+                "B",
+                4
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                2
+            ],
+            [
+                "split_L_mario_8_seg_16.png",
+                1
+            ],
+            [
+                "split_L_mario-6-1_seg_35.png",
+                1
+            ],
+            [
+                "P",
+                1
+            ]
+        ]
+    },
+    "split_L_mario-6-1_seg_44.png": {
+        "top": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "right": [
+            [
+                "split_R_mario-6-1_seg_44.png",
+                2
+            ]
+        ]
+    },
+    "split_R_mario-6-1_seg_44.png": {
+        "top": [
+            [
+                "B",
+                1
+            ],
+            [
+                "mario-1-1_seg_0.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "split_L_mario-6-1_seg_44.png",
+                2
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                2
+            ]
+        ]
+    },
+    "mario_3t_seg_5.png": {
+        "top": [
+            [
+                "B",
+                2
+            ],
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ],
+            [
+                "split_L_mario-6-1_seg_46.png",
+                1
+            ],
+            [
+                "split_R_mario-6-1_seg_46.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                2
+            ],
+            [
+                "P",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                4
+            ],
+            [
+                "P",
+                1
+            ],
+            [
+                "split_L_mario-6-1_seg_46.png",
+                1
+            ],
+            [
+                "split_R_mario-6-1_seg_46.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                4
+            ],
+            [
+                "mario-6-1_seg_46.png",
+                2
+            ]
+        ]
+    },
+    "mario-1-1_seg_0.png": {
+        "top": [
+            [
+                "B",
+                26
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                25
+            ],
+            [
+                "split_R_mario-6-1_seg_44.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                15
+            ],
+            [
+                "mario-1-1_seg_0.png",
+                11
+            ]
+        ],
+        "right": [
+            [
+                "mario-1-1_seg_0.png",
+                11
+            ]
+        ]
+    },
+    "split_L_mario-5-1_seg_32.png": {
+        "top": [
+            [
+                "B",
+                7
+            ],
+            [
+                "split_L_mario-5-1_seg_32.png",
+                4
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                2
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-6-1_seg_46.png",
+                7
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                6
+            ],
+            [
+                "split_L_mario-5-1_seg_32.png",
+                4
+            ],
+            [
+                "split_R_mario-5-1_seg_32.png",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                7
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                4
+            ]
+        ],
+        "right": [
+            [
+                "split_R_mario-5-1_seg_32.png",
+                11
+            ]
+        ]
+    },
+    "split_R_mario-5-1_seg_32.png": {
+        "top": [
+            [
+                "split_R_mario-5-1_seg_32.png",
+                4
+            ],
+            [
+                "split_L_mario-5-1_seg_32.png",
+                2
+            ],
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-6-1_seg_46.png",
+                8
+            ],
+            [
+                "split_R_mario-5-1_seg_32.png",
+                4
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "split_L_mario-5-1_seg_32.png",
+                11
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                4
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                9
+            ]
+        ]
+    },
+    "split_L_mario-1-1_seg_5.png": {
+        "top": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                1
+            ],
+            [
+                "split_L_mario-1-1_seg_5.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "split_R_mario-1-1_seg_5.png",
+                2
+            ],
+            [
+                "split_L_mario-1-1_seg_5.png",
+                1
+            ]
+        ]
+    },
+    "split_R_mario-1-1_seg_5.png": {
+        "top": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "split_L_mario-1-1_seg_5.png",
+                2
+            ],
+            [
+                "split_R_mario-1-1_seg_5.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "split_R_mario-1-1_seg_5.png",
+                1
+            ],
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World2-1_seg_2.png": {
+        "top": [
+            [
+                "B",
+                7
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                5
+            ],
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-6-1_seg_46.png",
+                12
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                5
+            ]
+        ],
+        "left": [
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                9
+            ],
+            [
+                "B",
+                4
+            ],
+            [
+                "mario-6-1_seg_46.png",
+                2
+            ]
+        ],
+        "right": [
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                9
+            ],
+            [
+                "B",
+                1
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                1
+            ],
+            [
+                "mario-6-1_seg_46.png",
+                1
+            ]
+        ]
+    },
+    "B": {
+        "top": [
+            [
+                "mario-1-1_seg_0.png",
+                25
+            ],
+            [
+                "split_L_mario-6-1_seg_44.png",
+                2
+            ],
+            [
+                "split_R_mario-6-1_seg_44.png",
+                2
+            ],
+            [
+                "mario_3t_seg_5.png",
+                2
+            ],
+            [
+                "split_L_mario-1-1_seg_5.png",
+                2
+            ],
+            [
+                "split_R_mario-1-1_seg_5.png",
+                2
+            ]
+        ],
+        "bottom": [
+            [
+                "mario-6-1_seg_46.png",
+                62
+            ],
+            [
+                "mario-1-1_seg_0.png",
+                26
+            ],
+            [
+                "split_L_mario-5-1_seg_32.png",
+                7
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                7
+            ],
+            [
+                "mario-5-1_seg_37.png",
+                2
+            ],
+            [
+                "split_L_mario-6-1_seg_44.png",
+                2
+            ],
+            [
+                "mario_3t_seg_5.png",
+                2
+            ],
+            [
+                "split_L_mario-1-1_seg_5.png",
+                2
+            ],
+            [
+                "split_R_mario-1-1_seg_5.png",
+                2
+            ],
+            [
+                "split_L_mario_8_seg_16.png",
+                1
+            ],
+            [
+                "split_L_mario-6-1_seg_35.png",
+                1
+            ],
+            [
+                "split_L_mario-6-1_seg_46.png",
+                1
+            ],
+            [
+                "split_R_mario-6-1_seg_46.png",
+                1
+            ],
+            [
+                "split_R_mario-6-1_seg_44.png",
+                1
+            ],
+            [
+                "split_R_mario-5-1_seg_32.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "split_R_mario-5-1_seg_32.png",
+                9
+            ],
+            [
+                "mario-6-1_seg_46.png",
+                4
+            ],
+            [
+                "mario_3t_seg_5.png",
+                4
+            ],
+            [
+                "split_R_mario-6-1_seg_44.png",
+                2
+            ],
+            [
+                "split_R_mario-1-1_seg_5.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "mario-1-1_seg_0.png",
+                15
+            ],
+            [
+                "split_L_mario-5-1_seg_32.png",
+                7
+            ],
+            [
+                "mario_3t_seg_5.png",
+                4
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_2.png",
+                4
+            ],
+            [
+                "mario-6-1_seg_46.png",
+                3
+            ],
+            [
+                "split_L_mario-6-1_seg_44.png",
+                2
+            ],
+            [
+                "split_L_mario-1-1_seg_5.png",
+                1
+            ]
+        ]
+    }
+}

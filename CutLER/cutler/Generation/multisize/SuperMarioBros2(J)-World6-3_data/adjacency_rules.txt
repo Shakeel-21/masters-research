@@ -1,0 +1,814 @@
+{
+    "SuperMarioBros2(J)-World2-1_seg_31.png": {
+        "top": [
+            [
+                "B",
+                2
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "SuperMarioBros2(J)-World3-3_seg_0.png",
+                1
+            ],
+            [
+                "P",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "right": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                1
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World6-3_seg_24.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "split_L_SuperMarioBros2(J)-World6-3_seg_10.png": {
+        "top": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                4
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "split_R_SuperMarioBros2(J)-World6-3_seg_10.png",
+                2
+            ]
+        ]
+    },
+    "split_R_SuperMarioBros2(J)-World6-3_seg_10.png": {
+        "top": [
+            [
+                "B",
+                3
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                4
+            ]
+        ],
+        "left": [
+            [
+                "split_L_SuperMarioBros2(J)-World6-3_seg_10.png",
+                2
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World6-3_seg_10.png": {
+        "top": [
+            [
+                "B",
+                10
+            ],
+            [
+                "P",
+                4
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_11.png",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World2-2_seg_38.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                15
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_15.png",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                11
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_14.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_31.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                17
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World2-2_seg_38.png",
+                1
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World1-1_seg_11.png": {
+        "top": [
+            [
+                "P",
+                5
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                5
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                5
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                5
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World2-1_seg_7.png": {
+        "top": [
+            [
+                "B",
+                10
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                10
+            ]
+        ],
+        "left": [
+            [
+                "SuperMarioBros2(J)-World4-1_seg_19.png",
+                4
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_7.png",
+                4
+            ]
+        ],
+        "right": [
+            [
+                "SuperMarioBros2(J)-World2-1_seg_7.png",
+                4
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World4-1_seg_29.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "P",
+                1
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World1-3_seg_14.png": {
+        "top": [
+            [
+                "B",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World1-1_seg_6.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                3
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                3
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                1
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World4-1_seg_19.png": {
+        "top": [
+            [
+                "B",
+                10
+            ]
+        ],
+        "bottom": [
+            [
+                "P",
+                7
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                5
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                4
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_7.png",
+                4
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World2-2_seg_38.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World1-3_seg_11.png": {
+        "top": [
+            [
+                "B",
+                3
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                2
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                3
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World1-1_seg_6.png": {
+        "top": [
+            [
+                "B",
+                3
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_14.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                3
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                3
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World1-3_seg_15.png": {
+        "top": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World2-2_seg_38.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                1
+            ],
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "split_L_SuperMarioBros2(J)-World1-3_seg_15.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ]
+        ]
+    },
+    "split_R_SuperMarioBros2(J)-World1-3_seg_15.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "split_L_SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                1
+            ]
+        ]
+    },
+    "SuperMarioBros2(J)-World3-3_seg_0.png": {
+        "top": [
+            [
+                "SuperMarioBros2(J)-World3-3_seg_0.png",
+                6
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_31.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "SuperMarioBros2(J)-World3-3_seg_0.png",
+                6
+            ],
+            [
+                "P",
+                2
+            ]
+        ],
+        "left": [
+            [
+                "B",
+                8
+            ]
+        ],
+        "right": [
+            [
+                "B",
+                8
+            ]
+        ]
+    },
+    "split_L_SuperMarioBros2(J)-World1-3_seg_27.png": {
+        "top": [
+            [
+                "B",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "SuperMarioBros2(J)-World2-1_seg_31.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "SuperMarioBros2(J)-World2-1_seg_31.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ]
+        ]
+    },
+    "split_R_SuperMarioBros2(J)-World1-3_seg_27.png": {
+        "top": [
+            [
+                "SuperMarioBros2(J)-World1-3_seg_11.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "SuperMarioBros2(J)-World2-1_seg_31.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "SuperMarioBros2(J)-World2-1_seg_31.png",
+                1
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "SuperMarioBros2(J)-World1-3_seg_11.png",
+                1
+            ]
+        ]
+    },
+    "B": {
+        "top": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                15
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_7.png",
+                10
+            ],
+            [
+                "SuperMarioBros2(J)-World1-1_seg_11.png",
+                5
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World6-3_seg_10.png",
+                4
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World6-3_seg_10.png",
+                4
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_14.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_11.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World1-1_seg_6.png",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_15.png",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World6-3_seg_24.png",
+                1
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ]
+        ],
+        "bottom": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                10
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_7.png",
+                10
+            ],
+            [
+                "SuperMarioBros2(J)-World4-1_seg_19.png",
+                10
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World6-3_seg_10.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_11.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World1-1_seg_6.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_31.png",
+                2
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World6-3_seg_10.png",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_14.png",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World6-3_seg_24.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World4-1_seg_29.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World2-2_seg_38.png",
+                1
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World1-3_seg_27.png",
+                1
+            ]
+        ],
+        "left": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                17
+            ],
+            [
+                "SuperMarioBros2(J)-World3-3_seg_0.png",
+                8
+            ],
+            [
+                "SuperMarioBros2(J)-World1-1_seg_11.png",
+                5
+            ],
+            [
+                "SuperMarioBros2(J)-World4-1_seg_19.png",
+                4
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_14.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_11.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World1-1_seg_6.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World6-3_seg_24.png",
+                1
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World6-3_seg_10.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World2-2_seg_38.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ],
+            [
+                "split_R_SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ]
+        ],
+        "right": [
+            [
+                "SuperMarioBros2(J)-World6-3_seg_10.png",
+                11
+            ],
+            [
+                "SuperMarioBros2(J)-World3-3_seg_0.png",
+                8
+            ],
+            [
+                "SuperMarioBros2(J)-World1-1_seg_11.png",
+                5
+            ],
+            [
+                "SuperMarioBros2(J)-World4-1_seg_19.png",
+                5
+            ],
+            [
+                "SuperMarioBros2(J)-World1-3_seg_14.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World1-1_seg_6.png",
+                3
+            ],
+            [
+                "SuperMarioBros2(J)-World2-1_seg_31.png",
+                2
+            ],
+            [
+                "SuperMarioBros2(J)-World6-3_seg_24.png",
+                1
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World6-3_seg_10.png",
+                1
+            ],
+            [
+                "SuperMarioBros2(J)-World4-1_seg_29.png",
+                1
+            ],
+            [
+                "split_L_SuperMarioBros2(J)-World1-3_seg_15.png",
+                1
+            ]
+        ]
+    }
+}

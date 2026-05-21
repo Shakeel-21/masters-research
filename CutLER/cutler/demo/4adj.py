@@ -201,64 +201,83 @@ class LevelReconstructor:
                             grid_x_right = x - offset_x + self.cell_w
                             split_pt = self.cell_w - offset_x
                             
+                            bg_color = level_img_original[0, 0, :3]
+
                             # -- Create Left Half --
-                            left_key = f"split_L_{template_key}"
-                            if left_key not in self.dynamic_templates:
-                                left_bgra = np.zeros((t_h, self.cell_w, 4), dtype=np.uint8)
-                                actual_split_w = min(split_pt, t_w)
-                                left_bgra[:, offset_x : offset_x + actual_split_w] = template_data['img_bgra'][:, :actual_split_w]
-                                self.dynamic_templates[left_key] = left_bgra
-                            else:
-                                left_bgra = self.dynamic_templates[left_key]
+                            left_bgra = np.zeros((t_h, self.cell_w, 4), dtype=np.uint8)
+                            actual_split_w = min(split_pt, t_w)
+                            left_bgra[:, offset_x : offset_x + actual_split_w] = template_data['img_bgra'][:, :actual_split_w]
+                            
+                            # Check if the Left Half is just pure background sky
+                            l_alpha = left_bgra[:, :, 3] > 127
+                            is_l_pure_bg = True
+                            if np.any(l_alpha):
+                                mean_color = np.mean(left_bgra[l_alpha, :3], axis=0)
+                                std_color = np.std(left_bgra[l_alpha, :3], axis=0)
+                                # If color matches the sky and variance is very low, it's just background padding
+                                if np.linalg.norm(mean_color - bg_color) < 15.0 and np.all(std_color < 5.0):
+                                    is_l_pure_bg = True
+                                else:
+                                    is_l_pure_bg = False
 
                             # -- Create Right Half --
-                            right_key = f"split_R_{template_key}"
-                            if right_key not in self.dynamic_templates:
-                                right_bgra = np.zeros((t_h, self.cell_w, 4), dtype=np.uint8)
-                                if t_w > split_pt:
-                                    actual_rem_w = min(t_w - split_pt, self.cell_w)
-                                    right_bgra[:, :actual_rem_w] = template_data['img_bgra'][:, split_pt : split_pt + actual_rem_w]
-                                self.dynamic_templates[right_key] = right_bgra
-                            else:
-                                right_bgra = self.dynamic_templates[right_key]
-
-                            # Apply visual graphics normally so it looks seamless in output
+                            right_bgra = np.zeros((t_h, self.cell_w, 4), dtype=np.uint8)
+                            if t_w > split_pt:
+                                actual_rem_w = min(t_w - split_pt, self.cell_w)
+                                right_bgra[:, :actual_rem_w] = template_data['img_bgra'][:, split_pt : split_pt + actual_rem_w]
+                            
+                            # Check if the Right Half is just pure background sky
+                            r_alpha = right_bgra[:, :, 3] > 127
+                            is_r_pure_bg = True
+                            if np.any(r_alpha):
+                                mean_color = np.mean(right_bgra[r_alpha, :3], axis=0)
+                                std_color = np.std(right_bgra[r_alpha, :3], axis=0)
+                                if np.linalg.norm(mean_color - bg_color) < 15.0 and np.all(std_color < 5.0):
+                                    is_r_pure_bg = True
+                                else:
+                                    is_r_pure_bg = False
+                            # -------------------------------------------oks seamless
                             overlap_heatmap[y:y + t_h, x:x + t_w][alpha_mask] += 1
                             roi_grid = blank_grid[y:y + t_h, x:x + t_w]
                             roi_grid[alpha_mask] = template_data['img_bgra'][alpha_mask]
                             blank_grid[y:y + t_h, x:x + t_w] = roi_grid
                             visited_mask[y:y + t_h, x:x + t_w][alpha_mask] = True
 
-                            # Register ID and Adjacency using the strictly grid-aligned halves
-                            # 1. Safely slice and assign the LEFT HALF
-                            l_start_x = max(0, grid_x_left)
-                            l_end_x = min(w, grid_x_left + self.cell_w)
-                            l_vis_w = l_end_x - l_start_x
-                            
-                            if l_vis_w > 0:
-                                # If it fell off the left edge, we must trim the mask too
-                                l_mask_start = 0 if grid_x_left >= 0 else -grid_x_left
-                                l_mask_end = l_mask_start + l_vis_w
-                                
-                                l_alpha = left_bgra[:, l_mask_start:l_mask_end, 3] > 127
-                                if np.any(l_alpha):
-                                    id_grid[y:y + t_h, l_start_x:l_end_x][l_alpha] = left_key
-                                    placed_instances.append((left_key, grid_x_left, y, self.cell_w, t_h))
+                            # Safely slice and assign the LEFT HALF (Only if it's NOT pure background)
+                            if not is_l_pure_bg:
+                                left_key = f"split_L_{template_key}"
+                                if left_key not in self.dynamic_templates:
+                                    self.dynamic_templates[left_key] = left_bgra
                                     
-                            # 2. Safely slice and assign the RIGHT HALF
-                            r_start_x = max(0, grid_x_right)
-                            r_end_x = min(w, grid_x_right + self.cell_w)
-                            r_vis_w = r_end_x - r_start_x
-                            
-                            if r_vis_w > 0:
-                                # If it fell off the left edge (rare for right half, but safe), trim the mask
-                                r_mask_start = 0 if grid_x_right >= 0 else -grid_x_right
-                                r_mask_end = r_mask_start + r_vis_w
+                                l_start_x = max(0, grid_x_left)
+                                l_end_x = min(w, grid_x_left + self.cell_w)
+                                l_vis_w = l_end_x - l_start_x
                                 
-                                r_alpha = right_bgra[:, r_mask_start:r_mask_end, 3] > 127
-                                if np.any(r_alpha):
-                                    id_grid[y:y + t_h, r_start_x:r_end_x][r_alpha] = right_key
+                                if l_vis_w > 0:
+                                    l_mask_start = 0 if grid_x_left >= 0 else -grid_x_left
+                                    l_mask_end = l_mask_start + l_vis_w
+                                    chunk_l_alpha = left_bgra[:, l_mask_start:l_mask_end, 3] > 127
+                                    id_grid[y:y + t_h, l_start_x:l_end_x][chunk_l_alpha] = left_key
+                                    placed_instances.append((left_key, grid_x_left, y, self.cell_w, t_h))
+
+                            # Safely slice and assign the RIGHT HALF (Only if it's NOT pure background)
+                            if not is_r_pure_bg:
+                                right_key = f"split_R_{template_key}"
+                                if right_key not in self.dynamic_templates:
+                                    self.dynamic_templates[right_key] = right_bgra
+                                    
+                                r_start_x = max(0, grid_x_right)
+                                r_end_x = min(w, grid_x_right + self.cell_w)
+                                r_vis_w = r_end_x - r_start_x
+                                
+                                if r_vis_w > 0:
+                                    r_mask_start = 0 if grid_x_right >= 0 else -grid_x_right
+                                    r_mask_end = r_mask_start + r_vis_w
+                                    chunk_r_alpha = right_bgra[:, r_mask_start:r_mask_end, 3] > 127
+                                    id_grid[y:y + t_h, r_start_x:r_end_x][chunk_r_alpha] = right_key
                                     placed_instances.append((right_key, grid_x_right, y, self.cell_w, t_h))
+
+                            # Apply visual graphics normally so the reconstructed image lo
                             
                         else:
                             overlap_heatmap[y:y + t_h, x:x + t_w][alpha_mask] += 1
@@ -562,7 +581,7 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "output_segments/1TestNorm05"
+    base_dir = "output_segments/mixedSizes"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
@@ -573,5 +592,5 @@ if __name__ == "__main__":
     
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/all"
+        base_output_dir="Generation/mixedSizes"
     )
