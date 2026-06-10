@@ -11,8 +11,8 @@ from PIL import Image, ImageDraw
 from collections import Counter, defaultdict
 import re
 
-filename = "level.png"
-ROOT_DIR = os.path.join("Generation", "mixedSizesV2")
+filename = "newCountLevel.png"
+ROOT_DIR = os.path.join("Generation", "mixedSizesV3")
 GRID_WIDTH = 230    
 GRID_HEIGHT = 14   
 TIMEOUT = 1000
@@ -354,8 +354,8 @@ def get_min_entropy_cell(grid):
     min_entropy = float('inf')
     min_cells = []
     
-    for y in range(len(grid) - 2, -1, -1):
-        for x in range(len(grid[0])):
+    for y in range(len(grid) - 2, 0, -1):
+        for x in range(1, len(grid[0]) - 1):
             if isinstance(grid[y][x], set):
                 entropy = len(grid[y][x])
                 
@@ -370,7 +370,6 @@ def get_min_entropy_cell(grid):
     
     if min_cells:
         return random.choice(min_cells)
-    
     return None
 
 
@@ -466,7 +465,7 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
         # FIX 1: Instant O(1) dictionary check instead of string slicing
         is_complex_clone = tile in tile_meta
 
-        if not is_structural and not is_complex_clone:
+        if not is_structural:
             target_ratio = base_weight / total_ratio_sum
             desired_total_count = target_ratio * total_grid_cells
             actual_count = state['current'].get(tile, 0)
@@ -519,30 +518,32 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
             global_x = x - meta['local_x'] + piece['local_x']
             
             # Force write the exact piece to the grid
-            grid[global_y][global_x] = piece['id']
-            collapsed_coords.append((global_y, global_x))
-            
-            # FIX 2: Track the specific piece ID, not the chosen anchor tile
-            if piece['id'] in state['current']:
-                state['current'][piece['id']] += 1
-                state['collapsed_count'] += 1
+            if isinstance(grid[global_y][global_x], set):
+                grid[global_y][global_x] = piece['id']
+                collapsed_coords.append((global_y, global_x))
+                
+                # FIX 2: Track the specific piece ID, not the chosen anchor tile
+                if piece['id'] in state['current']:
+                    state['current'][piece['id']] += 1
+                    state['collapsed_count'] += 1
                 
     else:
         # GENERIC STAMP: It's a 1x1 core tile
-        grid[y][x] = chosen_tile
-        collapsed_coords.append((y, x))
-        
-        if chosen_tile in state['current']:
-            state['current'][chosen_tile] += 1
-            state['collapsed_count'] += 1
+        if isinstance(grid[y][x], set):
+            grid[y][x] = chosen_tile
+            collapsed_coords.append((y, x))
             
-            # Structural tracking for core tiles
-            is_against_floor = (y + 1 < len(grid)) and (grid[y + 1][x] == pad_id)
-            is_against_roof = (y - 1 >= 0) and (grid[y - 1][x] == pad_id)
-            if is_against_roof:
-                state['roof'][chosen_tile] += 1
-            if is_against_floor:
-                state['floor'][chosen_tile] += 1
+            if chosen_tile in state['current']:
+                state['current'][chosen_tile] += 1
+                state['collapsed_count'] += 1
+                
+                # Structural tracking for core tiles
+                is_against_floor = (y + 1 < len(grid)) and (grid[y + 1][x] == pad_id)
+                is_against_roof = (y - 1 >= 0) and (grid[y - 1][x] == pad_id)
+                if is_against_roof:
+                    state['roof'][chosen_tile] += 1
+                if is_against_floor:
+                    state['floor'][chosen_tile] += 1
                 
     return collapsed_coords
 

@@ -336,15 +336,16 @@ class LevelReconstructor:
             cell_area = self.cell_w * self.cell_h
             unique_ids, pixel_counts = np.unique(id_grid_A, return_counts=True)
             for tile_id, p_count in zip(unique_ids, pixel_counts):
-                if tile_id == "UNKNOWN" or tile_id == "B": continue
+                if tile_id in ["UNKNOWN", "B", "P"]: continue
                 
-                # Assign frequency to base tile rather than the unique clone ID
+                # 1. Keep the exact clone ID frequency for precise WFC pacing
+                self.tile_frequencies[tile_id] += (p_count / cell_area)
+                
+                # 2. Extract and assign frequency to the base generic core as well
                 match = re.match(r"(.+?)_(tile_.+)_y\d+_x\d+", str(tile_id))
                 if match:
                     base_tile = f"{match.group(2)}.png"
                     self.tile_frequencies[base_tile] += (p_count / cell_area)
-                else:
-                    self.tile_frequencies[tile_id] += (p_count / cell_area)
 
         # ---------------------------------------------------------
         # PHASE 2: GHOST PASS RULES EXTRACTION
@@ -367,32 +368,42 @@ class LevelReconstructor:
                 core_key_base = match.group(2)   
                 core_key = f"{core_key_base}.png" 
 
-                # 1. Fully populate the base core tile with Ghost Rules so it survives pruning
+                # 1. Populate the generic core tile with its Ghost Pass rules
                 if core_key in ghost_rules:
                     for d in ["top", "bottom", "left", "right"]:
                         for gn, gcount in ghost_rules[core_key][d].items():
                             real_rules[core_key][d][gn] += gcount
                             
-                # Ensure baseline frequency so the generator has the option to use it generically
+                # Give generic cores a baseline frequency
                 if self.tile_frequencies[core_key] == 0:
                     self.tile_frequencies[core_key] = 0.05
 
+                # 2. Dynamic Boundary Edge Detection
                 for d in ["top", "bottom", "left", "right"]:
                     neighbors = list(rules[d].items())
                     
+                    # A face is strictly internal ONLY if all its connections are siblings
+                    is_strictly_internal = False
+                    if len(neighbors) > 0:
+                        is_strictly_internal = True
+                        for n_id, _ in neighbors:
+                            n_match = clone_pattern.match(n_id)
+                            if not (n_match and n_match.group(1) == base_name):
+                                is_strictly_internal = False
+                                break
+                                
+                    # Learn generic internal structure for the base core tiles
                     for n_id, n_count in neighbors:
                         n_match = clone_pattern.match(n_id)
-                        
-                        # 2. Internal Sibling: Enforce the internal pipeline structure
                         if n_match and n_match.group(1) == base_name:
                             n_core_key = f"{n_match.group(2)}.png"
                             real_rules[core_key][d][n_core_key] += n_count
-                        
-                        # 3. External Boundary: Apply Ghost Pass logic to the clone
-                        else:
-                            if core_key in ghost_rules:
-                                for gn, gcount in ghost_rules[core_key][d].items():
-                                    real_rules[clone_id][d][gn] += gcount
+
+                    # Apply Ghost rules ONLY to external boundaries
+                    if not is_strictly_internal:
+                        if core_key in ghost_rules:
+                            for gn, gcount in ghost_rules[core_key][d].items():
+                                real_rules[clone_id][d][gn] += gcount
 
         # for core_key, core_data in core_templates.items():
         #     # 1. If the core tile was never placed standalone, give it its Ghost Pass rules
@@ -872,5 +883,5 @@ if __name__ == "__main__":
     
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/mixedSizesV2"
+        base_output_dir="Generation/mixedSizesV3"
     )
