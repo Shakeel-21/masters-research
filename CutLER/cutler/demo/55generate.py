@@ -12,8 +12,8 @@ from collections import Counter, defaultdict
 import re
 
 filename = "level.png"
-ROOT_DIR = os.path.join("Generation", "mixedSizes")
-GRID_WIDTH = 50    
+ROOT_DIR = os.path.join("Generation", "mixedSizesV2")
+GRID_WIDTH = 230    
 GRID_HEIGHT = 14   
 TIMEOUT = 1000
 
@@ -775,48 +775,71 @@ def render_grid(grid, images, tile_sizes, cell_size, id_to_tile, max_entropy=0):
     
     canvas = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
     heatmap_overlay = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
-    draw_canvas = ImageDraw.Draw(canvas)
-    
     draw = None
     if max_entropy > 0:
         draw = ImageDraw.Draw(heatmap_overlay)
+        
     covered_cells = set()
+    
+    # Add the Regex pattern to detect complex clones
+    clone_pattern = re.compile(r"(.+?)_(tile_.+)_y\d+_x\d+")
 
     for y in range(rows - 1, -1, -1):
         for x in range(cols):
             cell_val = grid[y][x]
+
             if isinstance(cell_val, set): 
+                if draw and len(cell_val) > 0:
+                    entropy = len(cell_val)
+                    normalized = min(1.0, max(0.0, (entropy - 1) / (max_entropy - 1))) if max_entropy > 1 else 0
+                    r = int(255 * (1 - normalized))
+                    b = int(255 * normalized)
+                    alpha = int(40 + 160 * (1 - normalized)) 
+                    
+                    px = x * cw
+                    py = y * ch
+                    draw.rectangle([px, py, px + cw, py + ch], fill=(r, 0, b, alpha))
                 continue 
 
-            tile_name = id_to_tile.get(cell_val, "")
-            if not tile_name or tile_name in ["B", "P"]: continue
+            # Translate integer ID to string name
+            tile_name = id_to_tile.get(cell_val, str(cell_val))
+
+            if tile_name in ["B", "P"]: continue
             if (x, y) in covered_cells: continue
 
-            # --- Calculate exact pixel placement ---
+            # Translate the grid name to the actual image file name
+            image_key = tile_name
+            match = clone_pattern.match(tile_name)
+            if match:
+                # Extract the base core tile name (e.g., tile_00008.png)
+                image_key = f"{match.group(2)}.png"
+
+            if image_key not in images: continue
+
+            # Fetch the image and size using the translated key
+            img = images[image_key]
+            height_in_cells, width_in_cells = tile_sizes.get(image_key, (1, 1))
+
             px = x * cw
-            
-            # --- Try to find the image ---
-            img_key = tile_name
-            if img_key not in images and img_key + ".png" in images:
-                img_key += ".png"
-            
-            # --- Image Found! ---
-            img = images[img_key]
             py = (y + 1) * ch - img.height
-            
-            
-            # Draw the actual image over the yellow square
+
             canvas.alpha_composite(img, dest=(px, py))
 
-            # Mark covered cells
-            height_in_cells, width_in_cells = tile_sizes.get(cell_val, (1, 1))
             for dy in range(height_in_cells):
                 for dx in range(width_in_cells):
-                    covered_cells.add((x + dx, y - dy))
+                    target_x = x + dx
+                    target_y = y - dy 
+
+                    if target_x >= cols or target_y < 0:
+                        continue
+
+                    # Compare against the integer cell_val, not the string tile_name
+                    if not isinstance(grid[target_y][target_x], set) and grid[target_y][target_x] == cell_val:
+                        covered_cells.add((target_x, target_y))
 
     if max_entropy > 0:
         canvas.alpha_composite(heatmap_overlay)
-        
+
     return canvas
 
 def save_readable_debug_grid(grid, id_to_tile, filepath):
@@ -910,7 +933,7 @@ if __name__ == "__main__":
                 )
                 
                 print("Rendering final image...")
-                final_img = render_grid(final_grid_data, imgs, sizes, c_size, id_to_tile)
+                final_img = render_grid(final_grid_data, imgs, sizes, c_size, id_to_tile,max_entropy = len(playable_tiles))
                 
                 print(f"Saving to {final_path}...")
                 final_img.save(final_path)
@@ -920,7 +943,7 @@ if __name__ == "__main__":
             
         except TimeoutException as e:
             print(f"Generation timed out for {base_dir}. Saving debug image and skipping to the next folder...")
-            debug_img = render_grid(e.grid, imgs, sizes, c_size, id_to_tile)
+            debug_img = render_grid(e.grid, imgs, sizes, c_size, id_to_tile,max_entropy = len(playable_tiles))
             debug_path = os.path.join(folder, f"failed_timeout_{name}{counter}{extension}")
             debug_img.save(debug_path)
             continue
