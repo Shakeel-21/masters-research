@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 from collections import Counter, defaultdict
 import re
 
-filename = "BLevelnew.png"
+filename = "noRougeB.png"
 ROOT_DIR = os.path.join("Generation", "mixedSizesV3")
 GRID_WIDTH = 230    
 GRID_HEIGHT = 14   
@@ -528,8 +528,8 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
             pacing_multiplier *= throttle
             
         final_weight = local_w * pacing_multiplier
-        if is_structural:
-            final_weight *= 1000.0
+        # if is_structural:
+        #     final_weight *= 2.0
         weights.append(final_weight)
         
     # --- 5. SELECTION & FALLBACKS ---
@@ -963,7 +963,7 @@ if __name__ == "__main__":
         counter = 1
         
         try:
-            for i in range(1):
+            for i in range(5):
                 while os.path.exists(final_path):
                     new_filename = f"{name}{counter}{extension}"
                     final_path = os.path.join(folder, new_filename)

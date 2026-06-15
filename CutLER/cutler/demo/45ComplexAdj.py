@@ -325,20 +325,25 @@ class LevelReconstructor:
                 continue
 
         # --- UNKNOWN CLEANUP & FREQUENCY COUNTING ---
-        is_claimed_b = (id_grid_A == "B")
-        raw_conflict = is_occupied_source & is_claimed_b
         kernel = np.ones((5, 5), np.uint8)
-        significant_conflict = cv2.morphologyEx(raw_conflict.astype(np.uint8), cv2.MORPH_OPEN, kernel)
-        significant_conflict = significant_conflict.astype(bool)
-        id_grid_A[significant_conflict] = "UNKNOWN"
+
+        # Apply to Pass A (Complex Grid)
+        is_claimed_b_A = (id_grid_A == "B")
+        raw_conflict_A = is_occupied_source & is_claimed_b_A
+        significant_conflict_A = cv2.morphologyEx(raw_conflict_A.astype(np.uint8), cv2.MORPH_OPEN, kernel).astype(bool)
+        id_grid_A[significant_conflict_A] = "UNKNOWN"
+
+        # Apply to Pass B (Ghost Grid)
+        is_claimed_b_B = (id_grid_B == "B")
+        raw_conflict_B = is_occupied_source & is_claimed_b_B
+        significant_conflict_B = cv2.morphologyEx(raw_conflict_B.astype(np.uint8), cv2.MORPH_OPEN, kernel).astype(bool)
+        id_grid_B[significant_conflict_B] = "UNKNOWN"
 
         if self.cell_w > 0 and self.cell_h > 0:
             cell_area = self.cell_w * self.cell_h
             unique_ids, pixel_counts = np.unique(id_grid_A, return_counts=True)
             for tile_id, p_count in zip(unique_ids, pixel_counts):
-                # Keep B excluded so it does not get paced or throttle the canvas
                 if tile_id in ["UNKNOWN", "P"]: continue
-                
                 self.tile_frequencies[tile_id] += (p_count / cell_area)
 
         # ---------------------------------------------------------
