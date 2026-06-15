@@ -336,16 +336,10 @@ class LevelReconstructor:
             cell_area = self.cell_w * self.cell_h
             unique_ids, pixel_counts = np.unique(id_grid_A, return_counts=True)
             for tile_id, p_count in zip(unique_ids, pixel_counts):
-                if tile_id in ["UNKNOWN", "B", "P"]: continue
+                # Keep B excluded so it does not get paced or throttle the canvas
+                if tile_id in ["UNKNOWN", "P"]: continue
                 
-                # 1. Keep the exact clone ID frequency for precise WFC pacing
                 self.tile_frequencies[tile_id] += (p_count / cell_area)
-                
-                # 2. Extract and assign frequency to the base generic core as well
-                match = re.match(r"(.+?)_(tile_.+)_y\d+_x\d+", str(tile_id))
-                if match:
-                    base_tile = f"{match.group(2)}.png"
-                    self.tile_frequencies[base_tile] += (p_count / cell_area)
 
         # ---------------------------------------------------------
         # PHASE 2: GHOST PASS RULES EXTRACTION
@@ -403,6 +397,8 @@ class LevelReconstructor:
                     if not is_strictly_internal:
                         if core_key in ghost_rules:
                             for gn, gcount in ghost_rules[core_key][d].items():
+                                if gn == "B":
+                                    continue
                                 real_rules[clone_id][d][gn] += gcount
 
         # for core_key, core_data in core_templates.items():
