@@ -6,11 +6,11 @@ from pathlib import Path
 # --- CONFIGURATION ---
 INPUT_SEGMENTS = 'output_segments/transRemake'
 INPUT_ORIGINAL = 'demo/imgs/test'
-OUTPUT_FOLDER = 'output_segments/test'
+OUTPUT_FOLDER = 'output_segments/coreV2'
 
 GRID_CANDIDATES = [8, 16, 24, 32]
 MATCH_THRESHOLD = 0.05
-MIN_VISIBLE_PERCENT = 0.51 
+MIN_VISIBLE_PERCENT = 0.30 
 
 def load_images_from_folder(folder, pattern='*.png'):
     path_obj = Path(folder).resolve()
@@ -34,6 +34,12 @@ def pad_to_grid_transparent(img, grid_size):
     copy_w = min(w, grid_size)
     canvas[0:copy_h, 0:copy_w] = img[0:copy_h, 0:copy_w]
     return canvas
+
+def get_fuzzy_bgr(bgr_img):
+    """Applies blur and quantizes colors to ignore compression artifacts during duplicate checks."""
+    blurred = cv2.GaussianBlur(bgr_img, (3, 3), 0)
+    # Block colors into groups of 40 to easily match slight hue/compression shifts
+    return (blurred // 40) * 40 + 20
 
 def calculate_dynamic_grid(segment_paths):
     print("\n--- Calculating Dynamic Grid Size ---")
@@ -96,6 +102,9 @@ def process_dataset():
         level_img_bgra = clean_image(level_img_raw)
         level_img_bgr = level_img_bgra[:, :, :3]
         
+        # Use fuzzy level image strictly for evaluation, never for saving
+        fuzzy_level_bgr = get_fuzzy_bgr(level_img_bgr)
+        
         level_h, level_w = level_img_bgra.shape[:2]
         visited_mask = np.zeros((level_h, level_w), dtype=bool)
 
@@ -105,8 +114,10 @@ def process_dataset():
         for existing_bgra in global_unique_tiles:
             existing_bgr = existing_bgra[:, :, :3]
             existing_mask = existing_bgra[:, :, 3]
+            fuzzy_existing_bgr = get_fuzzy_bgr(existing_bgr)
+            
             try:
-                res = cv2.matchTemplate(level_img_bgr, existing_bgr, cv2.TM_SQDIFF_NORMED, mask=existing_mask)
+                res = cv2.matchTemplate(fuzzy_level_bgr, fuzzy_existing_bgr, cv2.TM_SQDIFF_NORMED, mask=existing_mask)
                 locs = np.where(res <= MATCH_THRESHOLD)
                 for y, x in zip(*locs):
                     visited_mask[y:y+GRID_SIZE, x:x+GRID_SIZE] = True
@@ -130,12 +141,14 @@ def process_dataset():
             if cv2.countNonZero(template_mask) < 25: 
                 continue
             
-            # --- Map to Level ---
+            # Map to Level
             found_in_level = False
             file_x, file_y = 0, 0
             
+            fuzzy_template_bgr = get_fuzzy_bgr(template_bgr)
+            
             try:
-                res = cv2.matchTemplate(level_img_bgr, template_bgr, cv2.TM_SQDIFF_NORMED, mask=template_mask)
+                res = cv2.matchTemplate(fuzzy_level_bgr, fuzzy_template_bgr, cv2.TM_SQDIFF_NORMED, mask=template_mask)
                 min_val, _, min_loc, _ = cv2.minMaxLoc(res)
                 
                 if min_val <= MATCH_THRESHOLD:
@@ -184,6 +197,12 @@ def process_dataset():
                         combined_mask = cv2.bitwise_and(local_level_alpha, local_mask)
                         visible_pixels = cv2.countNonZero(combined_mask)
                         
+                        # MASK HEALING: If tile is mostly solid (like a pipe), force it to a perfect 100% square
+                        # This stops edge shards from breaking the duplicate check.
+                        if visible_pixels >= (GRID_SIZE * GRID_SIZE * 0.85):
+                            combined_mask = np.full((GRID_SIZE, GRID_SIZE), 255, dtype=np.uint8)
+                            visible_pixels = GRID_SIZE * GRID_SIZE
+                        
                         if visible_pixels < min_required_pixels:
                             continue
                             
@@ -201,6 +220,11 @@ def process_dataset():
                         local_mask = template_mask[sy:sy+GRID_SIZE, sx:sx+GRID_SIZE]
                         visible_pixels = cv2.countNonZero(local_mask)
                         
+                        # MASK HEALING
+                        if visible_pixels >= (GRID_SIZE * GRID_SIZE * 0.85):
+                            local_mask = np.full((GRID_SIZE, GRID_SIZE), 255, dtype=np.uint8)
+                            visible_pixels = GRID_SIZE * GRID_SIZE
+                        
                         if visible_pixels < min_required_pixels:
                             continue
                             
@@ -212,7 +236,6 @@ def process_dataset():
                             'is_fallback': True
                         })
 
-            # Process largest blocks first
             scored_candidates.sort(key=lambda item: item['area'], reverse=True)
 
             for cand in scored_candidates:
@@ -220,7 +243,6 @@ def process_dataset():
                     abs_x, abs_y = cand['abs_x'], cand['abs_y']
                     final_local_mask = cand['mask']
                     
-                    # Apply 50% Threshold to block partially claimed misaligned grid spaces
                     local_visited = visited_mask[abs_y:abs_y+GRID_SIZE, abs_x:abs_x+GRID_SIZE]
                     if np.count_nonzero(local_visited) >= (GRID_SIZE * GRID_SIZE * 0.50):
                         duplicate_count += 1
@@ -237,23 +259,29 @@ def process_dataset():
                     final_local_mask = cand['mask']
                     
                     chunk_bgra = segment_bgra[sy:sy+GRID_SIZE, sx:sx+GRID_SIZE].copy()
+                    
+                    # Apply healed mask to fallback chunk if necessary
                     pristine_bgra = pad_to_grid_transparent(chunk_bgra, GRID_SIZE)
+                    pristine_bgra[:, :, 3] = pad_to_grid_transparent(cv2.cvtColor(final_local_mask, cv2.COLOR_GRAY2BGRA), GRID_SIZE)[:,:,0]
 
                 pristine_bgr = pristine_bgra[:, :, :3]
                 local_alpha = pristine_bgra[:, :, 3]
+                
+                fuzzy_pristine_bgr = get_fuzzy_bgr(pristine_bgr)
 
                 is_unique = True
                 for existing_bgra in global_unique_tiles:
                     existing_bgr = existing_bgra[:, :, :3]
                     existing_mask = existing_bgra[:, :, 3]
                     
+                    fuzzy_existing_bgr = get_fuzzy_bgr(existing_bgr)
                     combined_check_mask = cv2.bitwise_and(local_alpha, existing_mask)
                     
                     if cv2.countNonZero(combined_check_mask) < min_required_pixels:
                         continue
                         
                     try:
-                        res = cv2.matchTemplate(pristine_bgr, existing_bgr, cv2.TM_SQDIFF_NORMED, mask=combined_check_mask)
+                        res = cv2.matchTemplate(fuzzy_pristine_bgr, fuzzy_existing_bgr, cv2.TM_SQDIFF_NORMED, mask=combined_check_mask)
                         if res[0][0] <= MATCH_THRESHOLD:
                             is_unique = False
                             break
@@ -266,10 +294,8 @@ def process_dataset():
                     filename = f"tile_{saved_count:05d}.png"
                     cv2.imwrite(os.path.join(OUTPUT_FOLDER, filename), pristine_bgra)
                     
-                    # --- REAL-TIME DUPLICATE EAT-UP ---
-                    # Immediately masks every matching block currently visible on the level
                     try:
-                        res = cv2.matchTemplate(level_img_bgr, pristine_bgr, cv2.TM_SQDIFF_NORMED, mask=local_alpha)
+                        res = cv2.matchTemplate(fuzzy_level_bgr, fuzzy_pristine_bgr, cv2.TM_SQDIFF_NORMED, mask=local_alpha)
                         locs = np.where(res <= MATCH_THRESHOLD)
                         for y, x in zip(*locs):
                             visited_mask[y:y+GRID_SIZE, x:x+GRID_SIZE] = True
