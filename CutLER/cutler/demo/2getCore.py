@@ -6,11 +6,11 @@ from pathlib import Path
 # --- CONFIGURATION ---
 INPUT_SEGMENTS = 'output_segments/transRemake'
 INPUT_ORIGINAL = 'demo/imgs/test'
-OUTPUT_FOLDER = 'output_segments/coreV2'
+OUTPUT_FOLDER = 'output_segments/test'
 
 GRID_CANDIDATES = [8, 16, 24, 32]
 MATCH_THRESHOLD = 0.05
-MIN_VISIBLE_PERCENT = 0.55  
+MIN_VISIBLE_PERCENT = 0.51 
 
 def load_images_from_folder(folder, pattern='*.png'):
     path_obj = Path(folder).resolve()
@@ -114,7 +114,7 @@ def process_dataset():
                 continue
 
         # ---------------------------------------------------------
-        # PHASE 2: CLAMPED OMNI-DIRECTIONAL EXTRACTION
+        # PHASE 2: ALIGNMENT PIPELINE
         # ---------------------------------------------------------
         segment_files = load_images_from_folder(segment_dir)
         
@@ -130,107 +130,130 @@ def process_dataset():
             if cv2.countNonZero(template_mask) < 25: 
                 continue
             
+            # --- Map to Level ---
+            found_in_level = False
+            file_x, file_y = 0, 0
+            
             try:
                 res = cv2.matchTemplate(level_img_bgr, template_bgr, cv2.TM_SQDIFF_NORMED, mask=template_mask)
                 min_val, _, min_loc, _ = cv2.minMaxLoc(res)
+                
+                if min_val <= MATCH_THRESHOLD:
+                    found_in_level = True
+                    file_x, file_y = min_loc
             except cv2.error:
-                continue
+                pass
                 
-            if min_val > MATCH_THRESHOLD:
-                continue
-                
-            file_x, file_y = min_loc
+            scored_candidates = []
             
-            candidates = []
-            seen = set()
-            
-            # Helper to strictly clamp extraction bounds within the segment's actual size
-            def add_bounds(cx, cy):
-                ex = max(0, cx)
-                ey = max(0, cy)
-                ew = min(cx + GRID_SIZE, file_w) - ex
-                eh = min(cy + GRID_SIZE, file_h) - ey
+            if found_in_level:
+                # --- ALIGNMENT MODE 1: ABSOLUTE GLOBAL GRID ---
+                start_x = (file_x // GRID_SIZE) * GRID_SIZE
+                start_y = (file_y // GRID_SIZE) * GRID_SIZE
+                end_x = ((file_x + file_w + GRID_SIZE - 1) // GRID_SIZE) * GRID_SIZE
+                end_y = ((file_y + file_h + GRID_SIZE - 1) // GRID_SIZE) * GRID_SIZE
                 
-                if ew > 0 and eh > 0:
-                    bounds = (ex, ey, ew, eh)
-                    if bounds not in seen:
-                        seen.add(bounds)
-                        candidates.append(bounds)
+                for gy in range(start_y, end_y, GRID_SIZE):
+                    for gx in range(start_x, end_x, GRID_SIZE):
+                        if gx < 0 or gy < 0 or gx + GRID_SIZE > level_w or gy + GRID_SIZE > level_h:
+                            continue
 
-            # Define sweep steps
-            x_fwd = list(range(0, file_w, GRID_SIZE))
-            y_fwd = list(range(0, file_h, GRID_SIZE))
-            
-            x_rev = []
-            cx = file_w - GRID_SIZE
-            while cx >= -GRID_SIZE + 1:
-                x_rev.append(cx)
-                cx -= GRID_SIZE
-                
-            y_rev = []
-            cy = file_h - GRID_SIZE
-            while cy >= -GRID_SIZE + 1:
-                y_rev.append(cy)
-                cy -= GRID_SIZE
+                        overlap_x_start = max(gx, file_x)
+                        overlap_y_start = max(gy, file_y)
+                        overlap_x_end = min(gx + GRID_SIZE, file_x + file_w)
+                        overlap_y_end = min(gy + GRID_SIZE, file_y + file_h)
+                        
+                        if overlap_x_start >= overlap_x_end or overlap_y_start >= overlap_y_end:
+                            continue 
+                            
+                        local_mask = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.uint8)
+                        
+                        lg_x1 = overlap_x_start - gx
+                        lg_y1 = overlap_y_start - gy
+                        lg_x2 = lg_x1 + (overlap_x_end - overlap_x_start)
+                        lg_y2 = lg_y1 + (overlap_y_end - overlap_y_start)
+                        
+                        sm_x1 = overlap_x_start - file_x
+                        sm_y1 = overlap_y_start - file_y
+                        sm_x2 = sm_x1 + (overlap_x_end - overlap_x_start)
+                        sm_y2 = sm_y1 + (overlap_y_end - overlap_y_start)
+                        
+                        local_mask[lg_y1:lg_y2, lg_x1:lg_x2] = template_mask[sm_y1:sm_y2, sm_x1:sm_x2]
+                        local_level_alpha = level_img_bgra[gy:gy+GRID_SIZE, gx:gx+GRID_SIZE, 3]
+                        
+                        combined_mask = cv2.bitwise_and(local_level_alpha, local_mask)
+                        visible_pixels = cv2.countNonZero(combined_mask)
+                        
+                        if visible_pixels < min_required_pixels:
+                            continue
+                            
+                        scored_candidates.append({
+                            'abs_x': gx,
+                            'abs_y': gy,
+                            'area': visible_pixels,
+                            'mask': combined_mask,
+                            'is_fallback': False
+                        })
+            else:
+                # --- ALIGNMENT MODE 2: STRICT LOCAL GRID (NO OVERLAP SWEEPS) ---
+                for sy in range(0, file_h, GRID_SIZE):
+                    for sx in range(0, file_w, GRID_SIZE):
+                        local_mask = template_mask[sy:sy+GRID_SIZE, sx:sx+GRID_SIZE]
+                        visible_pixels = cv2.countNonZero(local_mask)
+                        
+                        if visible_pixels < min_required_pixels:
+                            continue
+                            
+                        scored_candidates.append({
+                            'sx': sx,
+                            'sy': sy,
+                            'area': visible_pixels,
+                            'mask': local_mask,
+                            'is_fallback': True
+                        })
 
-            # 1. Bottom-Left Anchor
-            for x in x_fwd:
-                for y in y_rev: add_bounds(x, y)
-            
-            # 2. Top-Right Anchor
-            for x in x_rev:
-                for y in y_fwd: add_bounds(x, y)
-                
-            # 3. Bottom-Right Anchor
-            for x in x_rev:
-                for y in y_rev: add_bounds(x, y)
-                
-            # 4. Top-Left Anchor
-            for x in x_fwd:
-                for y in y_fwd: add_bounds(x, y)
+            # Process largest blocks first
+            scored_candidates.sort(key=lambda item: item['area'], reverse=True)
 
-            if not candidates:
-                add_bounds(0, 0)
-
-            for (bx, by, bw, bh) in candidates:
-                abs_x = file_x + bx
-                abs_y = file_y + by
-                
-                if abs_x < 0 or abs_y < 0 or abs_x + bw > level_w or abs_y + bh > level_h:
-                    continue
+            for cand in scored_candidates:
+                if not cand['is_fallback']:
+                    abs_x, abs_y = cand['abs_x'], cand['abs_y']
+                    final_local_mask = cand['mask']
                     
-                # Extract exact dimensions, do not pull from outside logical boundaries
-                chunk_bgra = level_img_bgra[abs_y : abs_y + bh, abs_x : abs_x + bw].copy()
-                
-                # Use standard blank transparent canvas to fill remaining space
-                pristine_bgra = pad_to_grid_transparent(chunk_bgra, GRID_SIZE)
+                    # Apply 50% Threshold to block partially claimed misaligned grid spaces
+                    local_visited = visited_mask[abs_y:abs_y+GRID_SIZE, abs_x:abs_x+GRID_SIZE]
+                    if np.count_nonzero(local_visited) >= (GRID_SIZE * GRID_SIZE * 0.50):
+                        duplicate_count += 1
+                        continue
+
+                    level_chunk_bgr = level_img_bgra[abs_y:abs_y+GRID_SIZE, abs_x:abs_x+GRID_SIZE, :3]
+                    
+                    pristine_bgra = np.zeros((GRID_SIZE, GRID_SIZE, 4), dtype=np.uint8)
+                    pristine_bgra[:, :, :3] = level_chunk_bgr
+                    pristine_bgra[:, :, 3] = final_local_mask
+                    
+                else:
+                    sx, sy = cand['sx'], cand['sy']
+                    final_local_mask = cand['mask']
+                    
+                    chunk_bgra = segment_bgra[sy:sy+GRID_SIZE, sx:sx+GRID_SIZE].copy()
+                    pristine_bgra = pad_to_grid_transparent(chunk_bgra, GRID_SIZE)
+
                 pristine_bgr = pristine_bgra[:, :, :3]
-                local_level_alpha = pristine_bgra[:, :, 3]
-                
-                visible_pixels = cv2.countNonZero(local_level_alpha)
-                if visible_pixels < min_required_pixels:
-                    continue
-                    
-                v_y_end = min(abs_y + GRID_SIZE, level_h)
-                v_x_end = min(abs_x + GRID_SIZE, level_w)
-                local_visited = visited_mask[abs_y:v_y_end, abs_x:v_x_end]
-                
-                if np.count_nonzero(local_visited) >= (GRID_SIZE * GRID_SIZE * 0.5):
-                    duplicate_count += 1
-                    continue
+                local_alpha = pristine_bgra[:, :, 3]
 
                 is_unique = True
                 for existing_bgra in global_unique_tiles:
                     existing_bgr = existing_bgra[:, :, :3]
                     existing_mask = existing_bgra[:, :, 3]
                     
-                    combined_mask = cv2.bitwise_and(local_level_alpha, existing_mask)
+                    combined_check_mask = cv2.bitwise_and(local_alpha, existing_mask)
                     
-                    if cv2.countNonZero(combined_mask) < min_required_pixels:
+                    if cv2.countNonZero(combined_check_mask) < min_required_pixels:
                         continue
                         
                     try:
-                        res = cv2.matchTemplate(pristine_bgr, existing_bgr, cv2.TM_SQDIFF_NORMED, mask=combined_mask)
+                        res = cv2.matchTemplate(pristine_bgr, existing_bgr, cv2.TM_SQDIFF_NORMED, mask=combined_check_mask)
                         if res[0][0] <= MATCH_THRESHOLD:
                             is_unique = False
                             break
@@ -243,13 +266,16 @@ def process_dataset():
                     filename = f"tile_{saved_count:05d}.png"
                     cv2.imwrite(os.path.join(OUTPUT_FOLDER, filename), pristine_bgra)
                     
+                    # --- REAL-TIME DUPLICATE EAT-UP ---
+                    # Immediately masks every matching block currently visible on the level
                     try:
-                        res = cv2.matchTemplate(level_img_bgr, pristine_bgr, cv2.TM_SQDIFF_NORMED, mask=local_level_alpha)
+                        res = cv2.matchTemplate(level_img_bgr, pristine_bgr, cv2.TM_SQDIFF_NORMED, mask=local_alpha)
                         locs = np.where(res <= MATCH_THRESHOLD)
                         for y, x in zip(*locs):
                             visited_mask[y:y+GRID_SIZE, x:x+GRID_SIZE] = True
                     except cv2.error:
-                        visited_mask[abs_y:v_y_end, abs_x:v_x_end] = True
+                        if not cand['is_fallback']:
+                            visited_mask[abs_y:abs_y+GRID_SIZE, abs_x:abs_x+GRID_SIZE] = True
 
     print(f"\n--- DONE ---")
     print(f"Pristine Silhouette Tiles Extracted: {saved_count}")
