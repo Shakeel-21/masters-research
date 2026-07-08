@@ -11,8 +11,8 @@ from PIL import Image, ImageDraw
 from collections import Counter, defaultdict
 import re
 
-filename = "noRougeB.png"
-ROOT_DIR = os.path.join("Generation", "mixedSizesV3")
+filename = "img.png"
+ROOT_DIR = os.path.join("Generation", "newCoreV11")
 GRID_WIDTH = 230    
 GRID_HEIGHT = 14   
 TIMEOUT = 1000
@@ -216,11 +216,11 @@ def pad_grid(grid, pad_value):
 
 def analyze_complex_tiles(playable_tiles, id_to_tile, adjacencies):
     raw_groups = defaultdict(set)
-    pattern = re.compile(r"(.+?)_tile_.+_y\d+_x\d+")
+    clone_pattern = re.compile(r"(.+?)_((?:split_[LR]_)?tile_.+)_y\d+_x\d+")
     
     for tile_id in playable_tiles:
         tile_name = id_to_tile[tile_id]
-        match = pattern.match(tile_name)
+        match = clone_pattern.match(tile_name)
         if match:
             base_name = match.group(1)
             raw_groups[base_name].add(tile_id)
@@ -829,7 +829,7 @@ def render_grid(grid, images, tile_sizes, cell_size, id_to_tile, max_entropy=0):
     covered_cells = set()
     
     # Add the Regex pattern to detect complex clones
-    clone_pattern = re.compile(r"(.+?)_(tile_.+)_y\d+_x\d+")
+    clone_pattern = re.compile(r"(.+?)_((?:split_[LR]_)?tile_.+)_y\d+_x\d+")
 
     for y in range(rows - 1, -1, -1):
         for x in range(cols):
@@ -963,7 +963,7 @@ if __name__ == "__main__":
         counter = 1
         
         try:
-            for i in range(5):
+            for i in range(2):
                 while os.path.exists(final_path):
                     new_filename = f"{name}{counter}{extension}"
                     final_path = os.path.join(folder, new_filename)

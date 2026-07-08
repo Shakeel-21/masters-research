@@ -33,7 +33,7 @@ MANIFEST
 */OUTPUT/
 */wandb/
 
-
+CutLER/cutler/Generation/
 CutLER/cutler/output_segments/
 .png
 # local scripts
