@@ -131,12 +131,13 @@ class LevelReconstructor:
         visited_mask_B = np.zeros((h, w), dtype=bool)
         placed_instances_B = []
 
+        # --- FIX APPLIED HERE ---
+        level_img_for_matching = level_img_chroma
+
         if len(level_img_original.shape) == 3 and level_img_original.shape[2] == 4:
-            level_img_for_matching = cv2.cvtColor(level_img_original, cv2.COLOR_BGRA2BGR)
             source_alpha = level_img_original[:, :, 3]
             is_occupied_source = source_alpha > 10
         else:
-            level_img_for_matching = level_img_original
             bg_color = level_img_original[0, 0]
             diff = cv2.absdiff(level_img_original, bg_color)
             diff_sum = np.sum(diff, axis=2)
@@ -256,15 +257,25 @@ class LevelReconstructor:
                     c_shrunk = cv2.erode((c_alpha.astype(np.uint8)*255), shrink_kernel, iterations=1) > 127
                     if not np.any(c_shrunk): c_shrunk = c_alpha
 
+                    total_pixels = np.sum(c_shrunk)
+                    if total_pixels == 0: continue
+
                     # -- GHOST PASS (B) --
-                    # Ghost pass runs completely independent of complex clones
-                    if not np.any(visited_mask_B[y:y+ch, x:x+cw][c_shrunk]):
+                    target_B = visited_mask_B[y:y+ch, x:x+cw]
+                    overlap_B = np.sum(target_B[c_shrunk])
+                    
+                    # FIX 2: Mirror the 30% overlap tolerance from your NMS logic
+                    if (overlap_B / total_pixels) < 0.30:
                         id_grid_B[y:y+ch, x:x+cw][c_alpha] = core_key
                         visited_mask_B[y:y+ch, x:x+cw][c_alpha] = True
                         placed_instances_B.append((core_key, x, y, cw, ch))
 
                     # -- REAL PASS (A) --
-                    if not np.any(visited_mask_A[y:y+ch, x:x+cw][c_shrunk]):
+                    target_A = visited_mask_A[y:y+ch, x:x+cw]
+                    overlap_A = np.sum(target_A[c_shrunk])
+
+                    # FIX 2: Mirror the 30% overlap tolerance for Pass A
+                    if (overlap_A / total_pixels) < 0.30:
                         relative_x = x - global_offset_x
                         offset_x = relative_x % self.cell_w
                         
@@ -751,17 +762,17 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "output_segments/coreLevelsV5"
+    base_dir = "output_segments/test2Levels"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
         level_path="demo/imgs/test",
         output_path=base_dir,
-        match_threshold=0.05,
+        match_threshold=0.08,
         use_complex_tiles=True 
     )
     
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/coreLevelsV7"
+        base_output_dir="Generation/test2Levels"
     )

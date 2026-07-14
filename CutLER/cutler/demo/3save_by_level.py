@@ -5,9 +5,9 @@ from tqdm import tqdm
 import sys
 
 # --- CONFIGURATION ---
-SEGMENT_PATH = Path("output_segments/test")
+SEGMENT_PATH = Path("output_segments/test2")
 ORIGINAL_PATH = Path("demo/imgs/test")
-BLOCKS_PATH = Path("output_segments/testLevels")
+BLOCKS_PATH = Path("output_segments/test2Levels")
 
 MATCH_THRESHOLD = 0.05
 NMS_OVERLAP_THRESHOLD = 0.30
