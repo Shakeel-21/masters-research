@@ -11,10 +11,10 @@ from collections import defaultdict, Counter
 class LevelReconstructor:
     """
     Reconstructs level images using ONLY segments found in a folder matching the level's name.
-    Now supports Complex Tiles via a Two-Stage Masked Solver with a Ghost Pass.
+    Supports Complex Tiles via a Two-Stage Masked Solver with a Ghost Pass.
     """
     
-    def __init__(self, segment_path, level_path, output_path, match_threshold=80000, use_complex_tiles=False):
+    def __init__(self, segment_path, level_path, output_path, match_threshold=0.08, use_complex_tiles=False):
         self.segments_base_path = Path(segment_path)
         self.level_path = Path(level_path)
         self.output_path = Path(output_path)
@@ -27,25 +27,12 @@ class LevelReconstructor:
         self.used_templates = set() 
         self.dynamic_templates = {}
 
-        # --- Global Rule Dictionary ---
         self.adjacency_rules = defaultdict(lambda: {"top": Counter(), "bottom": Counter(), "left": Counter(), "right": Counter()})
-
         self.tile_frequencies = defaultdict(float)
-        self.template_padding = {} 
         self.cell_w = 0
         self.cell_h = 0
 
         self.output_path.mkdir(parents=True, exist_ok=True)
-    
-    @staticmethod
-    def apply_chroma_key(img_bgra):
-        CHROMA_KEY = [255, 0, 255] # Magenta
-        """Replaces all transparent pixels with a solid magenta color."""
-        bgr = img_bgra[:, :, :3].copy()
-        if img_bgra.shape[2] == 4:
-            alpha = img_bgra[:, :, 3]
-            bgr[alpha == 0] = CHROMA_KEY
-        return bgr
     
     def _load_source_levels(self):
         pattern = '*.png'
@@ -56,12 +43,9 @@ class LevelReconstructor:
         print(f"\nFound {len(image_files)} source levels in {self.level_path}...")
         for img_path in tqdm(image_files, desc="Loading Source Levels"):
             img_bgra = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED) 
-            img_chroma = self.apply_chroma_key(img_bgra)
             if img_bgra is not None:
-                # Store a dictionary with both versions
                 self.source_image_cache[img_path.name] = {
-                    'bgra': img_bgra,
-                    'chroma': img_chroma
+                    'bgra': img_bgra
                 }
 
     def _load_templates_for_level(self, level_stem):
@@ -79,7 +63,6 @@ class LevelReconstructor:
         templates = {}
         for img_path in image_files:
             img_bgra = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
-            chroma_bgr=self.apply_chroma_key(img_bgra)
             if img_bgra is None: continue
             
             if img_bgra.shape[2] == 4:
@@ -95,10 +78,6 @@ class LevelReconstructor:
             h, w = img_bgr.shape[:2]
             template_key = img_path.name 
 
-            erosion_kernel = np.ones((3, 3), np.uint8)
-            match_mask = cv2.erode(mask, erosion_kernel, iterations=1)
-            if cv2.countNonZero(match_mask) == 0:
-                match_mask = mask
             active_pixels = cv2.countNonZero(mask)
             bounding_area = w * h
             solidity = active_pixels / bounding_area if bounding_area > 0 else 0
@@ -106,9 +85,7 @@ class LevelReconstructor:
             templates[template_key] = {
                 'img_bgr': img_bgr,
                 'img_bgra': img_bgra,
-                'chroma_bgr': chroma_bgr,
                 'mask': mask,
-                'match_mask': match_mask,
                 'w': w,
                 'h': h,
                 'is_valid': is_valid,
@@ -118,11 +95,10 @@ class LevelReconstructor:
             }
         return templates
 
-    def _reconstruct_single_level_complex(self, level_name, level_img_original, level_img_chroma, level_stem):
-        print(f"\n  -> Running Two-Stage Masked Solver (Ghost Pass Enabled) for {level_name}")
+    def _reconstruct_single_level_complex(self, level_name, level_img_original, level_stem):
+        print(f"\n  -> Running Spatial Geometric Solver (Global NMS & Mask) for {level_name}")
         h, w, _ = level_img_original.shape
         
-        # --- INIT GRIDS FOR BOTH PASSES ---
         id_grid_A = np.full((h, w), "B", dtype=object)
         visited_mask_A = np.zeros((h, w), dtype=bool)
         placed_instances_A = []
@@ -131,8 +107,7 @@ class LevelReconstructor:
         visited_mask_B = np.zeros((h, w), dtype=bool)
         placed_instances_B = []
 
-        # --- FIX APPLIED HERE ---
-        level_img_for_matching = level_img_chroma
+        level_img_bgr = level_img_original[:, :, :3]
 
         if len(level_img_original.shape) == 3 and level_img_original.shape[2] == 4:
             source_alpha = level_img_original[:, :, 3]
@@ -158,29 +133,15 @@ class LevelReconstructor:
             self.cell_h = Counter([t['h'] for _, t in core_sorted if t['is_valid']]).most_common(1)[0][0]
 
         OVERLAP_TOLERANCE = 3 
-        kernel_size = OVERLAP_TOLERANCE * 2 + 1
-        shrink_kernel = np.ones((kernel_size, kernel_size), np.uint8)
-        
-        x_offsets = []
-        for template_key, template_data in core_sorted[:5]: 
-            if not template_data['is_valid']: continue
-            try:
-                res = cv2.matchTemplate(level_img_for_matching, template_data['chroma_bgr'], cv2.TM_SQDIFF_NORMED)
-                locs = np.where(res <= self.MATCH_THRESHOLD)
-                for start_x in locs[1]:
-                    x_offsets.append(start_x % self.cell_w)
-            except cv2.error:
-                continue
-
-        global_offset_x = Counter(x_offsets).most_common(1)[0][0] if x_offsets else 0
+        shrink_kernel = np.ones((OVERLAP_TOLERANCE * 2 + 1, OVERLAP_TOLERANCE * 2 + 1), np.uint8)
 
         # ---------------------------------------------------------
-        # PHASE 1.1: Core Injection inside Complex ROIs (PASS A)
+        # PHASE 1.1: Complex ROIs (PASS A)
         # ---------------------------------------------------------
         for comp_key, comp_data in complex_sorted:
             if not comp_data['is_valid']: continue
             try:
-                res = cv2.matchTemplate(level_img_for_matching, comp_data['chroma_bgr'], cv2.TM_SQDIFF_NORMED)
+                res = cv2.matchTemplate(level_img_bgr, comp_data['img_bgr'], cv2.TM_SQDIFF_NORMED, mask=comp_data['mask'])
                 locs = np.where(res <= self.MATCH_THRESHOLD)
                 matches = [(x, y, res[y, x]) for y, x in zip(*locs)]
                 matches.sort(key=lambda x: x[2])
@@ -195,62 +156,99 @@ class LevelReconstructor:
                     roi_x1 = max(0, gx - buffer)
                     roi_x2 = min(w, gx + comp_w + buffer)
                     
-                    roi_chroma = level_img_chroma[roi_y1:roi_y2, roi_x1:roi_x2]
+                    roi_bgr = level_img_bgr[roi_y1:roi_y2, roi_x1:roi_x2]
 
+                    roi_candidates = []
                     for core_key, core_data in core_sorted:
                         if not core_data['is_valid']: continue
-                        if roi_chroma.shape[0] < core_data['h'] or roi_chroma.shape[1] < core_data['w']: continue
+                        if roi_bgr.shape[0] < core_data['h'] or roi_bgr.shape[1] < core_data['w']: continue
 
-                        c_res = cv2.matchTemplate(roi_chroma, core_data['chroma_bgr'], cv2.TM_SQDIFF_NORMED)
+                        c_res = cv2.matchTemplate(roi_bgr, core_data['img_bgr'], cv2.TM_SQDIFF_NORMED, mask=core_data['mask'])
                         c_locs = np.where(c_res <= self.MATCH_THRESHOLD)
-                        c_matches = [(lx, ly, c_res[ly, lx]) for ly, lx in zip(*c_locs)]
-                        c_matches.sort(key=lambda x: x[2])
-
-                        for lx, ly, _ in c_matches:
-                            cw, ch = core_data['w'], core_data['h']
+                        
+                        for ly, lx in zip(*c_locs):
+                            error = c_res[ly, lx]
+                            weighted_score = (1.0 - error) * core_data['area']
+                            roi_candidates.append({
+                                "score": float(weighted_score),
+                                "x": int(lx), "y": int(ly),
+                                "core_key": core_key, "core_data": core_data
+                            })
                             
-                            global_x = roi_x1 + lx
-                            global_y = roi_y1 + ly
+                    roi_candidates.sort(key=lambda c: c["score"], reverse=True)
 
-                            if global_y + ch > h or global_x + cw > w: continue
+                    for cand in roi_candidates:
+                        core_key, core_data = cand["core_key"], cand["core_data"]
+                        lx, ly = cand["x"], cand["y"]
+                        cw, ch = core_data['w'], core_data['h']
+                        
+                        global_x, global_y = roi_x1 + lx, roi_y1 + ly
+                        if global_y + ch > h or global_x + cw > w: continue
 
-                            c_alpha = core_data['img_bgra'][:, :, 3] > 127
-                            c_shrunk = cv2.erode((c_alpha.astype(np.uint8)*255), shrink_kernel, iterations=1) > 127
-                            if not np.any(c_shrunk): c_shrunk = c_alpha
+                        c_alpha = core_data['img_bgra'][:, :, 3] > 127
+                        c_shrunk = cv2.erode((c_alpha.astype(np.uint8)*255), shrink_kernel, iterations=1) > 127
+                        if not np.any(c_shrunk): c_shrunk = c_alpha
 
-                            if np.any(visited_mask_A[global_y:global_y+ch, global_x:global_x+cw][c_shrunk]):
-                                continue
+                        if np.any(visited_mask_A[global_y:global_y+ch, global_x:global_x+cw][c_shrunk]):
+                            continue
 
-                            grid_y = round((global_y - gy) / self.cell_h) if self.cell_h > 0 else 0
-                            grid_x = round((global_x - gx) / self.cell_w) if self.cell_w > 0 else 0
+                        # Generate unique clone keys for complex rules
+                        grid_y = round((global_y - gy) / self.cell_h) if self.cell_h > 0 else 0
+                        grid_x = round((global_x - gx) / self.cell_w) if self.cell_w > 0 else 0
+                        clone_id = f"{comp_key[:-4]}_{core_key[:-4]}_y{grid_y}_x{grid_x}"
+                        
+                        if clone_id not in self.dynamic_templates:
+                            self.dynamic_templates[clone_id] = core_data['img_bgra']
                             
-                            clone_id = f"{comp_key[:-4]}_{core_key[:-4]}_y{grid_y}_x{grid_x}"
-                            
-                            if clone_id not in self.dynamic_templates:
-                                self.dynamic_templates[clone_id] = core_data['img_bgra']
-                                
-                            id_grid_A[global_y:global_y+ch, global_x:global_x+cw][c_alpha] = clone_id
-                            visited_mask_A[global_y:global_y+ch, global_x:global_x+cw][c_alpha] = True
-                            placed_instances_A.append((clone_id, global_x, global_y, cw, ch))
-                            
-                            self.used_templates.add(core_data['filepath'])
-                            self.used_templates.add(comp_data['filepath'])
+                        id_grid_A[global_y:global_y+ch, global_x:global_x+cw][c_alpha] = clone_id
+                        visited_mask_A[global_y:global_y+ch, global_x:global_x+cw][c_alpha] = True
+                        placed_instances_A.append((clone_id, global_x, global_y, cw, ch))
+                        
+                        self.used_templates.add(core_data['filepath'])
+                        self.used_templates.add(comp_data['filepath'])
             except cv2.error:
                 continue
 
         # ---------------------------------------------------------
-        # PHASE 1.2: Generic Fill & Splitting Logic (PASS A & B)
+        # PHASE 1.2: Generic Fill (Global Area-Weighted NMS Voting)
         # ---------------------------------------------------------
+        global_candidates = []
+        
         for core_key, core_data in core_sorted:
             if not core_data['is_valid']: continue
             try:
-                res = cv2.matchTemplate(level_img_for_matching, core_data['chroma_bgr'], cv2.TM_SQDIFF_NORMED)
+                res = cv2.matchTemplate(level_img_bgr, core_data['img_bgr'], cv2.TM_SQDIFF_NORMED, mask=core_data['mask'])
                 locs = np.where(res <= self.MATCH_THRESHOLD)
-                matches = [(x, y, res[y, x]) for y, x in zip(*locs)]
-                matches.sort(key=lambda x: x[2])
+                
+                for y, x in zip(*locs):
+                    error = res[y, x]
+                    weighted_score = (1.0 - error) * core_data['area']
+                    
+                    global_candidates.append({
+                        "box": [int(x), int(y), int(core_data['w']), int(core_data['h'])],
+                        "score": float(weighted_score),
+                        "x": int(x), "y": int(y),
+                        "core_key": core_key,
+                        "core_data": core_data
+                    })
+            except cv2.error:
+                continue
 
-                for x, y, _ in matches:
+        if global_candidates:
+            boxes = [c["box"] for c in global_candidates]
+            scores = [c["score"] for c in global_candidates]
+            indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.0, nms_threshold=0.30)
+            
+            if len(indices) > 0:
+                surviving = [global_candidates[i] for i in indices.flatten()]
+                surviving.sort(key=lambda c: c["score"], reverse=True)
+
+                for cand in surviving:
+                    core_key = cand["core_key"]
+                    core_data = cand["core_data"]
+                    x, y = cand["x"], cand["y"]
                     cw, ch = core_data['w'], core_data['h']
+                    
                     if y + ch > h or x + cw > w: continue
 
                     c_alpha = core_data['img_bgra'][:, :, 3] > 127
@@ -260,119 +258,35 @@ class LevelReconstructor:
                     total_pixels = np.sum(c_shrunk)
                     if total_pixels == 0: continue
 
-                    # -- GHOST PASS (B) --
                     target_B = visited_mask_B[y:y+ch, x:x+cw]
                     overlap_B = np.sum(target_B[c_shrunk])
                     
-                    # FIX 2: Mirror the 30% overlap tolerance from your NMS logic
                     if (overlap_B / total_pixels) < 0.30:
                         id_grid_B[y:y+ch, x:x+cw][c_alpha] = core_key
                         visited_mask_B[y:y+ch, x:x+cw][c_alpha] = True
                         placed_instances_B.append((core_key, x, y, cw, ch))
 
-                    # -- REAL PASS (A) --
                     target_A = visited_mask_A[y:y+ch, x:x+cw]
                     overlap_A = np.sum(target_A[c_shrunk])
 
-                    # FIX 2: Mirror the 30% overlap tolerance for Pass A
                     if (overlap_A / total_pixels) < 0.30:
-                        relative_x = x - global_offset_x
-                        offset_x = relative_x % self.cell_w
-                        
-                        is_middle_object = False
-                        if self.cell_w > 0:
-                            is_middle_object = abs(offset_x - (self.cell_w // 2)) <= 1
+                        id_grid_A[y:y+ch, x:x+cw][c_alpha] = core_key
+                        visited_mask_A[y:y+ch, x:x+cw][c_alpha] = True
+                        placed_instances_A.append((core_key, x, y, cw, ch))
+                        self.used_templates.add(core_data['filepath'])
 
-                        if is_middle_object:
-                            grid_x_left = x - offset_x
-                            grid_x_right = x - offset_x + self.cell_w
-                            split_pt = self.cell_w - offset_x
-                            bg_color_local = level_img_original[0, 0, :3] if len(level_img_original.shape) == 3 else [0,0,0]
+        # --- UNKNOWN CLEANUP (4-Pixel Buffer Pruning) ---
+        pruning_buffer_kernel = np.ones((4, 4), np.uint8)
 
-                            left_bgra = np.zeros((ch, self.cell_w, 4), dtype=np.uint8)
-                            actual_split_w = min(split_pt, cw)
-                            left_bgra[:, offset_x : offset_x + actual_split_w] = core_data['img_bgra'][:, :actual_split_w]
-                            
-                            l_alpha = left_bgra[:, :, 3] > 127
-                            is_l_pure_bg = True
-                            if np.any(l_alpha):
-                                mean_color = np.mean(left_bgra[l_alpha, :3], axis=0)
-                                std_color = np.std(left_bgra[l_alpha, :3], axis=0)
-                                if np.linalg.norm(mean_color - bg_color_local) < 15.0 and np.all(std_color < 5.0):
-                                    is_l_pure_bg = True
-                                else:
-                                    is_l_pure_bg = False
-
-                            right_bgra = np.zeros((ch, self.cell_w, 4), dtype=np.uint8)
-                            if cw > split_pt:
-                                actual_rem_w = min(cw - split_pt, self.cell_w)
-                                right_bgra[:, :actual_rem_w] = core_data['img_bgra'][:, split_pt : split_pt + actual_rem_w]
-                            
-                            r_alpha = right_bgra[:, :, 3] > 127
-                            is_r_pure_bg = True
-                            if np.any(r_alpha):
-                                mean_color = np.mean(right_bgra[r_alpha, :3], axis=0)
-                                std_color = np.std(right_bgra[r_alpha, :3], axis=0)
-                                if np.linalg.norm(mean_color - bg_color_local) < 15.0 and np.all(std_color < 5.0):
-                                    is_r_pure_bg = True
-                                else:
-                                    is_r_pure_bg = False
-
-                            visited_mask_A[y:y+ch, x:x+cw][c_alpha] = True
-
-                            if not is_l_pure_bg:
-                                left_key = f"split_L_{core_key}"
-                                if left_key not in self.dynamic_templates:
-                                    self.dynamic_templates[left_key] = left_bgra
-                                    
-                                l_start_x = max(0, grid_x_left)
-                                l_end_x = min(w, grid_x_left + self.cell_w)
-                                l_vis_w = l_end_x - l_start_x
-                                
-                                if l_vis_w > 0:
-                                    l_mask_start = 0 if grid_x_left >= 0 else -grid_x_left
-                                    l_mask_end = l_mask_start + l_vis_w
-                                    chunk_l_alpha = left_bgra[:, l_mask_start:l_mask_end, 3] > 127
-                                    id_grid_A[y:y+ch, l_start_x:l_end_x][chunk_l_alpha] = left_key
-                                    placed_instances_A.append((left_key, grid_x_left, y, self.cell_w, ch))
-
-                            if not is_r_pure_bg:
-                                right_key = f"split_R_{core_key}"
-                                if right_key not in self.dynamic_templates:
-                                    self.dynamic_templates[right_key] = right_bgra
-                                    
-                                r_start_x = max(0, grid_x_right)
-                                r_end_x = min(w, grid_x_right + self.cell_w)
-                                r_vis_w = r_end_x - r_start_x
-                                
-                                if r_vis_w > 0:
-                                    r_mask_start = 0 if grid_x_right >= 0 else -grid_x_right
-                                    r_mask_end = r_mask_start + r_vis_w
-                                    chunk_r_alpha = right_bgra[:, r_mask_start:r_mask_end, 3] > 127
-                                    id_grid_A[y:y+ch, r_start_x:r_end_x][chunk_r_alpha] = right_key
-                                    placed_instances_A.append((right_key, grid_x_right, y, self.cell_w, ch))
-                        else:
-                            id_grid_A[y:y+ch, x:x+cw][c_alpha] = core_key
-                            visited_mask_A[y:y+ch, x:x+cw][c_alpha] = True
-                            placed_instances_A.append((core_key, x, y, cw, ch))
-                            self.used_templates.add(core_data['filepath'])
-
-            except cv2.error:
-                continue
-
-        # --- UNKNOWN CLEANUP & FREQUENCY COUNTING ---
-        kernel = np.ones((5, 5), np.uint8)
-
-        # Apply to Pass A (Complex Grid)
         is_claimed_b_A = (id_grid_A == "B")
         raw_conflict_A = is_occupied_source & is_claimed_b_A
-        significant_conflict_A = cv2.morphologyEx(raw_conflict_A.astype(np.uint8), cv2.MORPH_OPEN, kernel).astype(bool)
+        # Erosion requires the entire 4x4 buffer to be True (conflicting) to trigger UNKNOWN
+        significant_conflict_A = cv2.erode(raw_conflict_A.astype(np.uint8), pruning_buffer_kernel, iterations=1).astype(bool)
         id_grid_A[significant_conflict_A] = "UNKNOWN"
 
-        # Apply to Pass B (Ghost Grid)
         is_claimed_b_B = (id_grid_B == "B")
         raw_conflict_B = is_occupied_source & is_claimed_b_B
-        significant_conflict_B = cv2.morphologyEx(raw_conflict_B.astype(np.uint8), cv2.MORPH_OPEN, kernel).astype(bool)
+        significant_conflict_B = cv2.erode(raw_conflict_B.astype(np.uint8), pruning_buffer_kernel, iterations=1).astype(bool)
         id_grid_B[significant_conflict_B] = "UNKNOWN"
 
         if self.cell_w > 0 and self.cell_h > 0:
@@ -403,21 +317,17 @@ class LevelReconstructor:
                 core_key_base = match.group(2)   
                 core_key = f"{core_key_base}.png" 
 
-                # 1. Populate the generic core tile with its Ghost Pass rules
                 if core_key in ghost_rules:
                     for d in ["top", "bottom", "left", "right"]:
                         for gn, gcount in ghost_rules[core_key][d].items():
                             real_rules[core_key][d][gn] += gcount
                             
-                # Give generic cores a baseline frequency
                 if self.tile_frequencies[core_key] == 0:
                     self.tile_frequencies[core_key] = 0.05
 
-                # 2. Dynamic Boundary Edge Detection
                 for d in ["top", "bottom", "left", "right"]:
                     neighbors = list(rules[d].items())
                     
-                    # A face is strictly internal ONLY if all its connections are siblings
                     is_strictly_internal = False
                     if len(neighbors) > 0:
                         is_strictly_internal = True
@@ -427,14 +337,12 @@ class LevelReconstructor:
                                 is_strictly_internal = False
                                 break
                                 
-                    # Learn generic internal structure for the base core tiles
                     for n_id, n_count in neighbors:
                         n_match = clone_pattern.match(n_id)
                         if n_match and n_match.group(1) == base_name:
                             n_core_key = f"{n_match.group(2)}.png"
                             real_rules[core_key][d][n_core_key] += n_count
 
-                    # Apply Ghost rules ONLY to external boundaries
                     if not is_strictly_internal:
                         if core_key in ghost_rules:
                             for gn, gcount in ghost_rules[core_key][d].items():
@@ -442,20 +350,6 @@ class LevelReconstructor:
                                     continue
                                 real_rules[clone_id][d][gn] += gcount
 
-        # for core_key, core_data in core_templates.items():
-        #     # 1. If the core tile was never placed standalone, give it its Ghost Pass rules
-        #     if core_key not in real_rules:
-        #         if core_key in ghost_rules:
-        #             real_rules[core_key] = {
-        #                 d: Counter(ghost_rules[core_key][d]) for d in ["top", "bottom", "left", "right"]
-        #             }
-            
-        #     # 2. Enforce a small baseline frequency so the generator can use it to start/fill lines
-        #     if self.tile_frequencies[core_key] < 0.05:
-        #         self.tile_frequencies[core_key] = 0.05
-                
-        #     # 3. Ensure the image asset gets copied to the output tiles directory
-        #     self.used_templates.add(core_data['filepath'])
         for clone_id, rules in real_rules.items():
             if "_y" in clone_id and "_x" in clone_id:
                 for d in ["top", "bottom", "left", "right"]:
@@ -474,7 +368,6 @@ class LevelReconstructor:
         self.placed_instances = placed_instances_A
         self.level_h = h
         self.level_w = w
-
 
     def _extract_neighbors_from_grid(self, placed_instances, id_grid, level_h, level_w, target_dict=None):
         if target_dict is None:
@@ -566,19 +459,15 @@ class LevelReconstructor:
 
         required_base_files = set()
 
-        # 1. Determine exactly which files are required by the final JSON rules
         for rule_key in self.adjacency_rules.keys():
             if rule_key in ["B", "P", "UNKNOWN"]: continue
 
             match = clone_pattern.match(rule_key)
             if match:
-                # If a complex clone is required, extract its core tile name
                 required_base_files.add(f"{match.group(2)}.png")
             else:
-                # Add standard tiles and split tiles
                 required_base_files.add(rule_key)
 
-        # 2. Save standard templates safely from the cache
         for req_file in required_base_files:
             if req_file in self.template_cache:
                 filepath = self.template_cache[req_file]['filepath']
@@ -586,9 +475,7 @@ class LevelReconstructor:
                 if img is not None:
                     cv2.imwrite(str(out_dir / req_file), img)
 
-        # 3. Save dynamic split templates
         for name, img in self.dynamic_templates.items():
-            # The dynamic template keys for splits already include .png (e.g., split_L_tile_00008.png)
             if name in required_base_files:
                 cv2.imwrite(str(out_dir / name), img)
 
@@ -598,14 +485,11 @@ class LevelReconstructor:
         
         for instance_id, x, y, w, h in self.placed_instances:
             if instance_id in self.adjacency_rules:
-                
-                # Fetch the literal template image based on the ID type
                 if instance_id in self.dynamic_templates:
                     template_bgra = self.dynamic_templates[instance_id]
                 elif instance_id in self.template_cache:
                     template_bgra = self.template_cache[instance_id]['img_bgra']
                 else:
-                    # Strip complex clone wrappers to find the base tile
                     match = re.match(r"(.+?)_(tile_.+)_y\d+_x\d+", instance_id)
                     if match:
                         core_file = f"{match.group(2)}.png"
@@ -616,8 +500,6 @@ class LevelReconstructor:
                     else:
                         continue
                         
-                # --- FIX: Boundary Clipping Logic ---
-                # Calculate exact bounds to prevent NumPy slice truncation and wrap-around
                 start_x = max(0, x)
                 start_y = max(0, y)
                 end_x = min(self.level_w, x + w)
@@ -626,23 +508,18 @@ class LevelReconstructor:
                 vis_w = end_x - start_x
                 vis_h = end_y - start_y
 
-                # Skip if the tile is completely off-screen
                 if vis_w <= 0 or vis_h <= 0:
                     continue
 
-                # Calculate internal mask offsets for the template if it was pushed off the left/top edges
                 mask_start_x = 0 if x < 0 else 0
                 mask_start_y = 0 if y < 0 else 0
                 
-                if x < 0:
-                    mask_start_x = -x
-                if y < 0:
-                    mask_start_y = -y
+                if x < 0: mask_start_x = -x
+                if y < 0: mask_start_y = -y
                     
                 mask_end_x = mask_start_x + vis_w
                 mask_end_y = mask_start_y + vis_h
 
-                # Extract the exact clipped portion of the template
                 t_bgra_clipped = template_bgra[mask_start_y:mask_end_y, mask_start_x:mask_end_x]
                 alpha = t_bgra_clipped[:, :, 3] > 0
 
@@ -701,7 +578,6 @@ class LevelReconstructor:
                 if tile in self.tile_frequencies:
                     del self.tile_frequencies[tile]
                 
-                # Dynamic templates check for splits
                 if tile in self.dynamic_templates:
                     del self.dynamic_templates[tile]
                     
@@ -726,7 +602,6 @@ class LevelReconstructor:
         for level_name, level_data in tqdm(self.source_image_cache.items(), desc="Processing Levels"):
             level_stem = Path(level_name).stem
             level_img_bgra = level_data['bgra']
-            level_img_chroma = level_data['chroma']
             
             self.adjacency_rules = defaultdict(lambda: {"top": Counter(), "bottom": Counter(), "left": Counter(), "right": Counter()})
             self.tile_frequencies = defaultdict(float)
@@ -747,10 +622,8 @@ class LevelReconstructor:
 
             self.unmatched_templates = set(self.template_cache.keys())
             
+            self._reconstruct_single_level_complex(level_name, level_img_bgra, level_stem)
             
-            self._reconstruct_single_level_complex(level_name, level_img_bgra, level_img_chroma, level_stem)
-            
-
             level_output_dir = out_base / f"{level_stem}_data"
             level_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -762,7 +635,7 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "output_segments/test2Levels"
+    base_dir = "output_segments/test4Levels"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
@@ -771,8 +644,7 @@ if __name__ == "__main__":
         match_threshold=0.08,
         use_complex_tiles=True 
     )
-    
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/test2Levels"
+        base_output_dir="Generation/test4NewLevels"
     )
