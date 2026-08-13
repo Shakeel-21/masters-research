@@ -373,10 +373,14 @@ class LevelReconstructor:
         if target_dict is None:
             target_dict = self.adjacency_rules
             
-        TOLERANCE = 12 
+        # Calculate 60% thickness based on the largest dimension
+        thickness_threshold = max(1, int(max(self.cell_w, self.cell_h) * 0.60))
+
+        # The raycast only goes as deep as the longest check requires
+        TOLERANCE = max(6, thickness_threshold) 
         EDGE_INSET = 2 
         
-        def get_smart_neighbors(r_start, r_end, c_start, c_end):
+        def get_smart_neighbors(r_start, r_end, c_start, c_end, direction, origin_id):
             r0 = max(0, min(r_start, level_h))
             r1 = max(0, min(r_end, level_h))
             c0 = max(0, min(c_start, level_w))
@@ -385,18 +389,55 @@ class LevelReconstructor:
             if r0 >= r1 or c0 >= c1:
                 return []
 
-            slice_values = id_grid[r0:r1, c0:c1].flatten()
-            unique_vals = np.unique(slice_values)
-
-            if "UNKNOWN" in unique_vals:
+            slice_values = id_grid[r0:r1, c0:c1]
+            
+            if "UNKNOWN" in slice_values:
                 return []
+
+            if direction == "left":
+                layers = [slice_values[:, i] for i in range(slice_values.shape[1]-1, -1, -1)]
+            elif direction == "right":
+                layers = [slice_values[:, i] for i in range(slice_values.shape[1])]
+            elif direction == "top":
+                layers = [slice_values[i, :] for i in range(slice_values.shape[0]-1, -1, -1)]
+            elif direction == "bottom":
+                layers = [slice_values[i, :] for i in range(slice_values.shape[0])]
+                
+            found_neighbors = set()
+            consecutive_b_layers = 0
+            self_tile_thickness = 0 # Add this tracker
             
-            non_background = [v for v in unique_vals if v != "B"]
-            
-            if len(non_background) > 0:
-                return non_background
-            else:
-                return ["B"] 
+            for layer in layers:
+                unique_in_layer = np.unique(layer)
+                non_b_p = [v for v in unique_in_layer if v not in ["B", "P"]]
+                
+                if len(non_b_p) > 0:
+                    consecutive_b_layers = 0 
+                    
+                    # Verify if it's just an overlap glitch of itself
+                    if len(non_b_p) == 1 and non_b_p[0] == origin_id:
+                        self_tile_thickness += 1
+                        if self_tile_thickness >= thickness_threshold:
+                            found_neighbors.add(origin_id)
+                            return list(found_neighbors)
+                        continue 
+                    else:
+                        valid_tiles = [v for v in non_b_p if v != origin_id]
+                        if valid_tiles:
+                            found_neighbors.update(valid_tiles)
+                            return list(found_neighbors)
+                        
+                elif "B" in unique_in_layer:
+                    consecutive_b_layers += 1
+                    if consecutive_b_layers == 6:
+                        found_neighbors.add("B")
+                        return list(found_neighbors)
+                        
+            if consecutive_b_layers > 0 and len(found_neighbors) == 0:
+                found_neighbors.add("B")
+                
+            return list(found_neighbors)
+        
 
         for name, x, y, w, h in placed_instances:
             inset_x = min(w // 3, EDGE_INSET)
@@ -407,7 +448,7 @@ class LevelReconstructor:
             else:
                 neighbors = get_smart_neighbors(
                     y - TOLERANCE, y, 
-                    x + inset_x, x + w - inset_x 
+                    x + inset_x, x + w - inset_x, "top", name 
                 )
                 target_dict[name]["top"].update(neighbors)
 
@@ -416,7 +457,7 @@ class LevelReconstructor:
             else:
                 neighbors = get_smart_neighbors(
                     y + h, y + h + TOLERANCE, 
-                    x + inset_x, x + w - inset_x
+                    x + inset_x, x + w - inset_x, "bottom", name
                 )
                 target_dict[name]["bottom"].update(neighbors)
 
@@ -425,7 +466,7 @@ class LevelReconstructor:
             else:
                 neighbors = get_smart_neighbors(
                     y + inset_y, y + h - inset_y,
-                    x - TOLERANCE, x
+                    x - TOLERANCE, x, "left", name
                 )
                 target_dict[name]["left"].update(neighbors)
 
@@ -434,7 +475,7 @@ class LevelReconstructor:
             else:
                 neighbors = get_smart_neighbors(
                     y + inset_y, y + h - inset_y,
-                    x + w, x + w + TOLERANCE
+                    x + w, x + w + TOLERANCE, "right", name
                 )
                 target_dict[name]["right"].update(neighbors)
 
@@ -635,7 +676,7 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "output_segments/test4Levels"
+    base_dir = "output_segments/1 corePerLevel Final"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
@@ -646,5 +687,5 @@ if __name__ == "__main__":
     )
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/test4NewLevels"
+        base_output_dir="Generation/1 corePerLevel Final"
     )

@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 import re
 
 filename = "img.png"
-ROOT_DIR = os.path.join("Generation", "newCoreV11")
+ROOT_DIR = os.path.join("Generation", "1 corePerLevel Final")
 GRID_WIDTH = 230    
 GRID_HEIGHT = 14   
 TIMEOUT = 1000
@@ -805,8 +805,8 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
         try:
             return generate_level_attempt(height, width)
         except RetryException as e:
-            if attempts >= 3:
-                print(f"Encountered 5 dead ends. Aborting this generation...")
+            if attempts >= 10:
+                print(f"Encountered 10 dead ends. Aborting this generation...")
                 raise MaxRetriesException(e.grid)
             continue
         except TimeoutException as e:
@@ -963,7 +963,7 @@ if __name__ == "__main__":
         counter = 1
         
         try:
-            for i in range(2):
+            for i in range(4):
                 while os.path.exists(final_path):
                     new_filename = f"{name}{counter}{extension}"
                     final_path = os.path.join(folder, new_filename)

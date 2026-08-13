@@ -635,7 +635,7 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "output_segments/test4Levels"
+    base_dir = "output_segments/NewMixedSizes"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
@@ -646,5 +646,5 @@ if __name__ == "__main__":
     )
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/test4NewLevels"
+        base_output_dir="Generation/NewMixedSizes"
     )
