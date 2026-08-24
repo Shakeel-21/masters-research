@@ -281,12 +281,12 @@ class LevelReconstructor:
         is_claimed_b_A = (id_grid_A == "B")
         raw_conflict_A = is_occupied_source & is_claimed_b_A
         # Erosion requires the entire 4x4 buffer to be True (conflicting) to trigger UNKNOWN
-        significant_conflict_A = cv2.erode(raw_conflict_A.astype(np.uint8), pruning_buffer_kernel, iterations=1).astype(bool)
+        significant_conflict_A = cv2.morphologyEx(raw_conflict_A.astype(np.uint8), cv2.MORPH_OPEN, pruning_buffer_kernel).astype(bool)
         id_grid_A[significant_conflict_A] = "UNKNOWN"
 
         is_claimed_b_B = (id_grid_B == "B")
         raw_conflict_B = is_occupied_source & is_claimed_b_B
-        significant_conflict_B = cv2.erode(raw_conflict_B.astype(np.uint8), pruning_buffer_kernel, iterations=1).astype(bool)
+        significant_conflict_B = cv2.morphologyEx(raw_conflict_B.astype(np.uint8), cv2.MORPH_OPEN, pruning_buffer_kernel).astype(bool)
         id_grid_B[significant_conflict_B] = "UNKNOWN"
 
         if self.cell_w > 0 and self.cell_h > 0:
@@ -358,6 +358,18 @@ class LevelReconstructor:
                         
         self.adjacency_rules = real_rules
 
+        for t_id, rules in self.adjacency_rules.items():
+            if t_id in ["B", "P", "UNKNOWN"]: 
+                continue
+                
+            for d in ["top", "bottom", "left", "right"]:
+                # Isolate active neighbors, ignoring padding
+                active_neighbors = [n for n in rules[d].keys() if n != "P"]
+                
+                # If the tile only sees itself, it is in a trap. Add B to allow an exit.
+                if len(active_neighbors) == 1 and active_neighbors[0] == t_id:
+                    self.adjacency_rules[t_id][d]["B"] += 1
+
         # Create output visualization
         blank_grid_A = np.zeros((h, w, 4), dtype=np.uint8)
         for _, x, y, cw, ch in placed_instances_A:
@@ -390,9 +402,6 @@ class LevelReconstructor:
                 return []
 
             slice_values = id_grid[r0:r1, c0:c1]
-            
-            if "UNKNOWN" in slice_values:
-                return []
 
             if direction == "left":
                 layers = [slice_values[:, i] for i in range(slice_values.shape[1]-1, -1, -1)]
@@ -405,17 +414,28 @@ class LevelReconstructor:
                 
             found_neighbors = set()
             consecutive_b_layers = 0
-            self_tile_thickness = 0 # Add this tracker
+            self_tile_thickness = 0
+            passed_gap = False 
+            saw_unknown = False # NEW: Track if we enter a missing block void
             
             for layer in layers:
                 unique_in_layer = np.unique(layer)
+                
+                if "UNKNOWN" in unique_in_layer:
+                    passed_gap = True 
+                    saw_unknown = True # Flag that we are inside a void
+                    continue 
+                    
                 non_b_p = [v for v in unique_in_layer if v not in ["B", "P"]]
                 
                 if len(non_b_p) > 0:
                     consecutive_b_layers = 0 
                     
-                    # Verify if it's just an overlap glitch of itself
                     if len(non_b_p) == 1 and non_b_p[0] == origin_id:
+                        if passed_gap:
+                            found_neighbors.add(origin_id)
+                            return list(found_neighbors)
+                            
                         self_tile_thickness += 1
                         if self_tile_thickness >= thickness_threshold:
                             found_neighbors.add(origin_id)
@@ -426,15 +446,14 @@ class LevelReconstructor:
                         if valid_tiles:
                             found_neighbors.update(valid_tiles)
                             return list(found_neighbors)
-                        
+                
                 elif "B" in unique_in_layer:
+                    passed_gap = True 
                     consecutive_b_layers += 1
-                    if consecutive_b_layers == 6:
+                    if consecutive_b_layers >= 6:
                         found_neighbors.add("B")
                         return list(found_neighbors)
                         
-            if consecutive_b_layers > 0 and len(found_neighbors) == 0:
-                found_neighbors.add("B")
                 
             return list(found_neighbors)
         
@@ -676,7 +695,7 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "output_segments/1 corePerLevel Final"
+    base_dir = "output_segments/1MixedSizedTest"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
@@ -687,5 +706,5 @@ if __name__ == "__main__":
     )
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/1 corePerLevel Final"
+        base_output_dir="Generation/1MixedSizedTest"
     )

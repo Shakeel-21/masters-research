@@ -11,16 +11,7 @@ from PIL import Image, ImageDraw
 from collections import Counter, defaultdict
 import re
 
-filename = "img.png"
-ROOT_DIR = os.path.join("Generation", "1 corePerLevel Final")
-GRID_WIDTH = 230    
-GRID_HEIGHT = 14   
-TIMEOUT = 1000
-
 DEBUG = False
-MERGE = False
-FRAMES = False
-
 
 def merge_wfc_levels(level_paths, output_dir):
     print(f"Merging {len(level_paths)} level datasets into {output_dir}...")
@@ -137,8 +128,8 @@ def load_data(rules_file, ratios_file, tiles_dir):
         t_id = tile_to_id[t_name]
         int_adjacencies[t_id] = {}
         for d, neighbors in directions.items():
-            int_adjacencies[t_id][d] = [[tile_to_id[n], w] for n, w in neighbors if n in tile_to_id]
-
+            # Store as {neighbor_id: weight} for O(1) lookups
+            int_adjacencies[t_id][d] = {tile_to_id[n]: w for n, w in neighbors if n in tile_to_id}
     # Translate Ratios & Sizes to Ints
     int_ratios = {tile_to_id[k]: v for k, v in ratios.items() if k in tile_to_id}
     int_tile_sizes = {tile_to_id[k]: v for k, v in tile_sizes.items() if k in tile_to_id}
@@ -241,9 +232,8 @@ def analyze_complex_tiles(playable_tiles, id_to_tile, adjacencies):
             
             # 2. Walk the exact topological links defined by your adjacency rules
             for d_key, dy, dx in [("top", -1, 0), ("bottom", 1, 0), ("left", 0, -1), ("right", 0, 1)]:
-                allowed = adjacencies.get(curr_id, {}).get(d_key, [])
-                for n_id, _ in allowed:
-                    # If the neighbor is part of the same complex structure, map its coordinate!
+                allowed = adjacencies.get(curr_id, {}).get(d_key, {})
+                for n_id in allowed: # Iterates over dictionary keys
                     if n_id in pieces and n_id not in visited:
                         visited[n_id] = (cy + dy, cx + dx)
                         queue.append((n_id, cy + dy, cx + dx))
@@ -309,17 +299,16 @@ def initial_grid_prune(grid, tile_meta, blueprints, adjacencies, pad_id):
                 # 2. Mid-Air Boundary Trap (ALL tiles, Core and Complex)
                 # If we are NOT at the absolute bottom, we cannot place tiles that ONLY allow "P" below them
                 if y < playable_height:
-                    allowed_bottoms = adjacencies.get(tile_id, {}).get("bottom", [])
+                    allowed_bottoms = adjacencies.get(tile_id, {}).get("bottom", {})
                     # Check if "P" is the ONLY allowed neighbor
-                    if len(allowed_bottoms) == 1 and allowed_bottoms[0][0] == pad_id:
+                    if len(allowed_bottoms) == 1 and pad_id in allowed_bottoms:
                         to_remove.add(tile_id)
                         continue
                         
-                # If we are NOT at the absolute top, we cannot place tiles that ONLY allow "P" above them
                 if y > 1:
-                    allowed_tops = adjacencies.get(tile_id, {}).get("top", [])
+                    allowed_tops = adjacencies.get(tile_id, {}).get("top", {})
                     # Check if "P" is the ONLY allowed neighbor
-                    if len(allowed_tops) == 1 and allowed_tops[0][0] == pad_id:
+                    if len(allowed_tops) == 1 and pad_id in allowed_tops:
                         to_remove.add(tile_id)
                         continue
                         
@@ -420,6 +409,15 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
         if is_complex:
             meta = tile_meta[tile]
             base_name = meta['base_name']
+            top_y = y - meta['local_y']
+            left_x = x - meta['local_x']
+            bottom_y = top_y + blueprints[base_name]['max_y']
+            right_x = left_x + blueprints[base_name]['max_x']
+            
+            # If the extreme edges of the macro fall outside the playable grid, skip the piece loop entirely
+            if top_y < 1 or left_x < 1 or bottom_y >= len(grid) - 1 or right_x >= len(grid[0]) - 1:
+                continue # Immediately reject without further iteration
+
             blueprint = blueprints[base_name]['pieces']
             
             for piece in blueprint:
@@ -452,14 +450,16 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
             if 0 <= ny < len(grid) and 0 <= nx < len(grid[0]):
                 neighbor_val = grid[ny][nx]
                 if not isinstance(neighbor_val, set):
-                    allowed = adjacencies.get(tile, {}).get(d_key, [])
-                    n_weight = next((w for n, w in allowed if n == neighbor_val), 0.0)
+                    allowed = adjacencies.get(tile, {}).get(d_key, {})
+                    
+                    # Direct dictionary fetch instead of next(generator)
+                    n_weight = allowed.get(neighbor_val, 0.0)
 
                     if n_weight <= 0.0:
                         is_illegal = True
                         break
 
-                    total_allowed_weight = sum(w for n, w in allowed)
+                    total_allowed_weight = sum(allowed.values())
                     prob = n_weight / total_allowed_weight if total_allowed_weight > 0 else 0
                     directional_probs.append(prob)
 
@@ -475,11 +475,11 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
             local_w *= p
 
         # --- 3. STRUCTURAL BOUNDARY CHECKING (Floor and Roof Restoration) ---
-        allowed_bottoms = adjacencies.get(tile, {}).get("bottom", [])
-        allowed_tops = adjacencies.get(tile, {}).get("top", [])
+        allowed_bottoms = adjacencies.get(tile, {}).get("bottom", {})
+        allowed_tops = adjacencies.get(tile, {}).get("top", {})
         
-        valid_bottoms = [n[0] for n in allowed_bottoms]
-        valid_tops = [n[0] for n in allowed_tops]
+        valid_bottoms = allowed_bottoms.keys()
+        valid_tops = allowed_tops.keys()
 
         is_against_floor = (y == len(grid) - 2)
         is_against_roof = (y == 1)
@@ -675,17 +675,11 @@ def get_direction(y, x, y_top, y_bottom, x_left, x_right):
 
 def is_valid_neighbor(source_tile, target_tile, direction_idx, adjacencies):
     dir_key = DIR_MAP.get(direction_idx)
-    if not dir_key: return False
-    
-    if source_tile not in adjacencies:
+    if not dir_key or source_tile not in adjacencies:
         return False 
-
-    allowed_neighbors = adjacencies[source_tile][dir_key] 
-    # Linear scan through small integer arrays is blistering fast in PyPy
-    for item in allowed_neighbors:
-        if item[0] == target_tile:
-            return True
-    return False
+    
+    # O(1) dictionary key lookup
+    return target_tile in adjacencies[source_tile][dir_key]
 
 
 class TimeoutException(Exception):
@@ -703,7 +697,7 @@ class MaxRetriesException(Exception):
         self.grid = grid
 
 
-def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_id, playable_tiles, b_id): 
+def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_id, playable_tiles, b_id, frames=False): 
     global_start_time = time.time()
     
     def check_timeout(current_grid):
@@ -738,21 +732,17 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
                 for x in range(1, playable_width + 1):
                     to_remove = set()
                     for tile_id in grid[y][x]:
-                        # If we are NOT at the absolute bottom row, we cannot place tiles that ONLY allow "P" below them
                         if y < playable_height:
-                            allowed_bottoms = [n[0] for n in adjacencies.get(tile_id, {}).get("bottom", [])]
-                            if len(allowed_bottoms) == 1 and allowed_bottoms[0] == pad_id:
+                            allowed_bottoms = adjacencies.get(tile_id, {}).get("bottom", {})
+                            if len(allowed_bottoms) == 1 and pad_id in allowed_bottoms:
                                 to_remove.add(tile_id)
                         
-                        # If we are NOT at the absolute top row, we cannot place tiles that ONLY allow "P" above them
                         if y > 1:
-                            allowed_tops = [n[0] for n in adjacencies.get(tile_id, {}).get("top", [])]
-                            if len(allowed_tops) == 1 and allowed_tops[0] == pad_id:
+                            allowed_tops = adjacencies.get(tile_id, {}).get("top", {})
+                            if len(allowed_tops) == 1 and pad_id in allowed_tops:
                                 to_remove.add(tile_id)
                                 
-                    grid[y][x] -= to_remove
-            
-            
+                    grid[y][x] -= to_remove          
             
             
             
@@ -791,7 +781,7 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
                         propagate(grid, cy, cx, adjacencies, tile_sizes, check_timeout)
                     placements += 1
 
-                    if FRAMES and placements % 50 == 0:
+                    if frames and placements % 50 == 0:
                         frame_states.append(copy.deepcopy(grid))
                 else:
                     print(f"Dead end at {y},{x}. Restarting...")
@@ -803,7 +793,8 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
     while True:
         attempts += 1
         try:
-            return generate_level_attempt(height, width)
+            grid, history, steps, frames_list = generate_level_attempt(height, width)
+            return grid, history, steps, frames_list, attempts
         except RetryException as e:
             if attempts >= 10:
                 print(f"Encountered 10 dead ends. Aborting this generation...")
@@ -926,21 +917,27 @@ def save_readable_debug_grid(grid, id_to_tile, filepath):
         f.write("\n".join(lines))
 
 
-if __name__ == "__main__":
+def run_generation(root_dir, grid_width, grid_height, num_levels, timeout=2000, filename="eval.png", merge_data=False, frames=False):
+    """
+    Executes the WFC generation process for a specified number of levels and dimensions.
+    Returns a list of filepaths to the generated level images.
+    """
     level_folders = []
-    if os.path.exists(ROOT_DIR):
-        if os.path.exists(os.path.join(ROOT_DIR, "adjacency_rules.txt")):
-            level_folders.append(ROOT_DIR)
+    generated_file_paths = []
+    
+    if os.path.exists(root_dir):
+        if os.path.exists(os.path.join(root_dir, "adjacency_rules.txt")):
+            level_folders.append(root_dir)
         else:
-            for item in os.listdir(ROOT_DIR):
-                item_path = os.path.join(ROOT_DIR, item)
+            for item in os.listdir(root_dir):
+                item_path = os.path.join(root_dir, item)
                 if item in ("merged_data", "Generations"):
                     continue
                 if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "adjacency_rules.txt")):
                     level_folders.append(item_path)
 
-    if MERGE and len(level_folders) > 1:
-        merged_output_dir = os.path.join(ROOT_DIR, "merged_data")
+    if merge_data and len(level_folders) > 1:
+        merged_output_dir = os.path.join(root_dir, "merged_data")
         merge_wfc_levels(level_folders, merged_output_dir)
         target_folders = [merged_output_dir]
     else:
@@ -959,16 +956,19 @@ if __name__ == "__main__":
 
         out_filename = os.path.basename(base_output_path)  
         name, extension = os.path.splitext(out_filename)
-        final_path = base_output_path
-        counter = 1
         
         try:
-            for i in range(4):
+            for _ in range(num_levels):
+                final_path = base_output_path
+                counter = 1
+                
+                # Ensure unique filename
                 while os.path.exists(final_path):
                     new_filename = f"{name}{counter}{extension}"
                     final_path = os.path.join(folder, new_filename)
                     counter += 1
                 
+                global id_to_tile # Needed due to scope requirements in local analyze calls
                 adj, ratios, imgs, sizes, c_size, tile_to_id, id_to_tile = load_data(RULES_FILE, RATIOS_FILE, TILES_DIR) 
                 
                 b_id = tile_to_id.get("B")
@@ -976,12 +976,13 @@ if __name__ == "__main__":
                 playable_tiles = get_all_tile_names(adj, id_to_tile)
                 
                 current_run_name = f"{name}{counter if counter > 1 else ''}"
-                #print("Generating grid...")
-                final_grid_data, gen_history, col_steps, frame_states = generate_level(
-                    GRID_HEIGHT, GRID_WIDTH, adj, ratios, sizes, TIMEOUT, pad_id, playable_tiles, b_id
+                start_t = time.time()
+
+                final_grid_data, gen_history, col_steps, frame_states, attempts = generate_level(
+                    grid_height, grid_width, adj, ratios, sizes, timeout, pad_id, playable_tiles, b_id, frames
                 )
                 
-                if FRAMES and frame_states:
+                if frames and frame_states:
                     print(f"Level generated successfully! Rendering {len(frame_states)} frames with heatmap...")
                     for idx, state_grid in enumerate(frame_states):
                         step_num = (idx + 1) * 50
@@ -991,23 +992,29 @@ if __name__ == "__main__":
                         temp_img.save(frame_path)
 
                 print("Rendering final image...")
-                final_img = render_grid(final_grid_data, imgs, sizes, c_size, id_to_tile,max_entropy = len(playable_tiles))
+                final_img = render_grid(final_grid_data, imgs, sizes, c_size, id_to_tile, max_entropy = len(playable_tiles))
                 
                 print(f"Saving to {final_path}...")
                 final_img.save(final_path)
-                print("Done processing folder!")
+                t_taken = time.time() - start_t
+                generated_file_paths.append({
+                    'path': final_path,
+                    'grid': final_grid_data,
+                    'time': t_taken,
+                    'retries': attempts - 1, 
+                    'id_to_tile': id_to_tile 
+                })
+                print("Done processing level!")
 
-                
-            
         except TimeoutException as e:
             print(f"Generation timed out for {base_dir}. Saving debug image and skipping to the next folder...")
-            debug_img = render_grid(e.grid, imgs, sizes, c_size, id_to_tile,max_entropy = len(playable_tiles))
+            debug_img = render_grid(e.grid, imgs, sizes, c_size, id_to_tile, max_entropy=len(playable_tiles))
             debug_path = os.path.join(folder, f"failed_timeout_{name}{counter}{extension}")
             debug_img.save(debug_path)
             continue
         except MaxRetriesException as e:
-            print(f"Max retries (5) reached for {base_dir}. Saving debug image and skipping to the next folder...")
-            debug_img = render_grid(e.grid, imgs, sizes, c_size, id_to_tile,max_entropy = len(playable_tiles))
+            print(f"Max retries (10) reached for {base_dir}. Saving debug image and skipping to the next folder...")
+            debug_img = render_grid(e.grid, imgs, sizes, c_size, id_to_tile, max_entropy=len(playable_tiles))
             debug_path = os.path.join(folder, f"failed_deadend_{name}{counter}{extension}")
             debug_img.save(debug_path)
 
@@ -1019,3 +1026,10 @@ if __name__ == "__main__":
             traceback.print_exc()
             print(f"Error in {base_dir}: {e}")
             continue
+
+    return generated_file_paths
+
+# Allow standalone execution if needed
+if __name__ == "__main__":
+    test_dir = os.path.join("Generation", "1MixedSizedTest")
+    run_generation(test_dir, grid_width=100, grid_height=14, num_levels=2)
