@@ -103,14 +103,12 @@ def cross_batch_analysis(core_results, complex_results, baseline_dir):
     else:
         print(f"Warning: Baseline directory {baseline_dir} not found. Skipping baseline SSIM.")
 
-    # Calculate Baseline SSIM for both batches
     if baseline_paths:
         for batch in [core_results, complex_results]:
             for res in batch:
                 base_scores = [calculate_ssim(res['Path'], bp) for bp in baseline_paths]
                 res['Baseline SSIM'] = round(np.mean(base_scores), 4) if base_scores else 0.0
 
-    # Calculate Core vs Complex SSIM
     cross_ssim_scores = []
     for c_res in core_results:
         for comp_res in complex_results:
@@ -118,7 +116,6 @@ def cross_batch_analysis(core_results, complex_results, baseline_dir):
     
     avg_cross_ssim = round(np.mean(cross_ssim_scores), 4) if cross_ssim_scores else 0.0
 
-    # Compile Summary Statistics
     core_df = pd.DataFrame(core_results)
     comp_df = pd.DataFrame(complex_results)
 
@@ -126,7 +123,6 @@ def cross_batch_analysis(core_results, complex_results, baseline_dir):
     summary.append("=== GENERATION EVALUATION SUMMARY ===")
     
     if not core_df.empty and not comp_df.empty:
-        # Performance
         t_core, t_comp = core_df['Time (s)'].mean(), comp_df['Time (s)'].mean()
         time_mult = t_comp / t_core if t_core > 0 else 0
         summary.append(f"\n1. PERFORMANCE")
@@ -136,14 +132,12 @@ def cross_batch_analysis(core_results, complex_results, baseline_dir):
         r_core, r_comp = core_df['Retries'].mean(), comp_df['Retries'].mean()
         summary.append(f"Core Avg Retries: {r_core:.1f} | Complex Avg Retries: {r_comp:.1f}")
 
-        # Distribution
         kl_core, kl_comp = core_df['KL-Div'].mean(), comp_df['KL-Div'].mean()
         ent_core, ent_comp = core_df['Entropy'].mean(), comp_df['Entropy'].mean()
         summary.append(f"\n2. DISTRIBUTIONAL SHIFTS")
         summary.append(f"Core Avg KL-Div: {kl_core:.4f} | Complex Avg KL-Div: {kl_comp:.4f}")
         summary.append(f"Core Avg Entropy: {ent_core:.4f} | Complex Avg Entropy: {ent_comp:.4f}")
         
-        # Similarity
         base_core = core_df['Baseline SSIM'].mean() if 'Baseline SSIM' in core_df else 0
         base_comp = comp_df['Baseline SSIM'].mean() if 'Baseline SSIM' in comp_df else 0
         summary.append(f"\n3. PERCEPTUAL SIMILARITY")
@@ -154,16 +148,20 @@ def cross_batch_analysis(core_results, complex_results, baseline_dir):
     summary_text = "\n".join(summary)
     print("\n" + summary_text)
     
-    with open("comparison_summary.txt", "w") as f:
+    # Updated to save inside the baseline folder
+    summary_file_path = os.path.join(baseline_dir, "comparison_summary.txt")
+    with open(summary_file_path, "w") as f:
         f.write(summary_text)
 
 def main():
-    # --- CONFIGURATION ---
-    CORE_FOLDER = os.path.join("Generation", "0CoreDataset/mario-2-1_data")
-    COMPLEX_FOLDER = os.path.join("Generation", "0ComplexDataset/mario-2-1_data")
-    BASELINE_FOLDER = os.path.join("Generation","Baselines")
+    CORE_FOLDER = os.path.join("Generation", "0CoreDataset/mario_7_data")
+    COMPLEX_FOLDER = os.path.join("Generation", "0ComplexDataset/mario_7_data")
+    BASELINE_FOLDER = os.path.join("Generation","Baselines/mario 7 100")
     
-    GRID_WIDTH = 50
+    # Ensure the baseline directory exists to avoid save errors later
+    os.makedirs(BASELINE_FOLDER, exist_ok=True)
+    
+    GRID_WIDTH = 100
     GRID_HEIGHT = 14
     NUM_LEVELS = 10
     
@@ -183,7 +181,6 @@ def main():
     else:
         print(f"Warning: Complex directory {COMPLEX_FOLDER} not found.")
 
-    # Execute Comparisons
     if core_results and complex_results:
         cross_batch_analysis(core_results, complex_results, BASELINE_FOLDER)
 
@@ -191,7 +188,8 @@ def main():
         df = pd.DataFrame(all_results)
         df = df.drop(columns=['Path']) 
         
-        output_file = "evaluation_metrics_raw.csv"
+        # Updated to save inside the baseline folder
+        output_file = os.path.join(BASELINE_FOLDER, "evaluation_metrics_raw.csv")
         df.to_csv(output_file, index=False)
         print(f"\nRaw metrics exported to {output_file}")
 
