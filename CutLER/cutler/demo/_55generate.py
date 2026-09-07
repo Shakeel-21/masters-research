@@ -232,10 +232,30 @@ def analyze_complex_tiles(playable_tiles, id_to_tile, adjacencies):
                         visited[n_id] = (cy + dy, cx + dx)
                         queue.append((n_id, cy + dy, cx + dx))
                         
-        for p_id in pieces:
-            if p_id not in visited:
-                match = re.search(r"_y(\d+)_x(\d+)", id_to_tile[p_id])
-                visited[p_id] = (int(match.group(1)), int(match.group(2)))
+        name_off = {}
+        for p in pieces:
+            m = re.search(r"_y(\d+)_x(\d+)", id_to_tile[p])
+            name_off[p] = (int(m.group(1)), int(m.group(2)))
+
+        visited = {}
+        remaining = set(pieces)
+        while remaining:
+            # deterministic: start each component at its top-left-most piece
+            start = min(remaining, key=lambda p: name_off[p])
+            local = {start: (0, 0)}
+            queue = [start]
+            while queue:
+                curr = queue.pop(0)
+                cy, cx = local[curr]
+                for d_key, dy, dx in [("top",-1,0),("bottom",1,0),("left",0,-1),("right",0,1)]:
+                    for n_id in adjacencies.get(curr, {}).get(d_key, {}):
+                        if n_id in remaining and n_id not in local:
+                            local[n_id] = (cy + dy, cx + dx)
+                            queue.append(n_id)
+            sy, sx = name_off[start]                 # anchor this component
+            for p, (cy, cx) in local.items():
+                visited[p] = (cy + sy, cx + sx)
+            remaining -= set(local)
                 
         min_y = min(y for y, x in visited.values())
         min_x = min(x for y, x in visited.values())

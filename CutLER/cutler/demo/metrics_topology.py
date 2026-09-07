@@ -17,7 +17,8 @@ cannot distinguish a ground-attached block from a floating platform above it, so
 
 This module works on the 2D occupancy grid instead:
 
-  solid mask -> connected components (4-connectivity)
+  every non-background tile is solid
+             -> connected components (4-connectivity)
              -> components touching the bottom row  = GROUND structure
              -> everything else                     = FLOATING platforms
 
@@ -26,28 +27,18 @@ structure only. Platform metrics are computed from the floating components only.
 
 USAGE
 -----
-    from metrics_topology import SolidityModel, structural_metrics
+    from metrics_topology import structural_metrics
 
-    solidity = SolidityModel(mode="non_background")          # drop-in default
-    # or, much better:
-    solidity = SolidityModel(mode="classes",
-                             class_map=json.load(open("tile_classes.json")))
-
-    metrics, ngrams, debug = structural_metrics(grid, id_to_tile, solidity)
-
-Generate a stub class map to fill in:
-    python metrics_topology.py --stub path/to/dataset/tiles > tile_classes.json
+    metrics, ngrams, debug = structural_metrics(grid, id_to_tile)
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import zlib
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from dataclasses import dataclass
 
 import numpy as np
 from scipy import ndimage
@@ -122,149 +113,7 @@ def grid_to_arrays(grid, id_to_tile):
 # Solidity: which tiles are collidable geometry?
 # --------------------------------------------------------------------------
 
-# Classes that Mario can stand on / is blocked by.
-SOLID_CLASSES = {"solid", "ground", "block", "breakable", "question", "pipe", "platform"}
-# Classes that occupy a cell but are walked through (decor, pickups, enemies).
-PASSABLE_CLASSES = {"background", "decoration", "coin", "reward", "enemy", "hazard", "empty"}
-
-
 @dataclass
-class SolidityModel:
-    """
-    Decides, per grid cell, whether that cell is collidable geometry.
-
-    mode="non_background"
-        Everything except "B" is solid. Reproduces the original behaviour.
-        Cheap, but counts coins, bushes, clouds and enemies as platforms, and
-        (see caveat below) inflates the Complex batch.
-
-    mode="classes"
-        Uses `class_map`: {base_tile_name: class_string}. Recommended.
-
-    mode="image"
-        Per-cell occupancy read out of the tile PNGs: for a clone cell at
-        (local_y, local_x) the corresponding sub-cell of the parent image is
-        cropped and tested for non-empty pixels. This is the only mode that
-        measures complex (multi-cell) tiles fairly - see CAVEAT.
-
-    CAVEAT (important for the Core vs Complex comparison)
-    -----------------------------------------------------
-    Every cell of a complex tile folds to the same base image name, so any
-    name-based rule marks all N cells of an NxM chunk identically. If that chunk
-    is mostly sky, the Complex batch is measured as far denser and rougher than
-    it really is, and the Core/Complex comparison is biased. mode="image" fixes
-    this; verify it with `dump_occupancy_ascii` against the rendered PNG.
-    """
-
-    mode: str = "non_background"
-    class_map: dict = field(default_factory=dict)
-    tiles_dir: Optional[str] = None
-    cell_size: Optional[Tuple[int, int]] = None          # (w, h) in px; auto-detected if None
-    bg_color: Optional[Tuple[int, int, int]] = None           # e.g. (92, 148, 252) Mario sky
-    alpha_threshold: int = 16
-    color_tolerance: int = 24
-    coverage_threshold: float = 0.10        # frac of non-empty px to call solid
-    y_from_top: bool = True                 # local_y=0 is the TOP row of a clone
-    default_solid: bool = True              # unknown tile -> solid
-
-    def __post_init__(self):
-        self._cache: dict = {}
-        self._images: dict = {}
-        self._warned = set()
-        if self.mode == "image":
-            self._load_images()
-
-    # -- image backend ----------------------------------------------------
-    def _load_images(self):
-        from PIL import Image
-
-        if not self.tiles_dir or not os.path.isdir(self.tiles_dir):
-            raise ValueError("mode='image' requires a valid tiles_dir")
-        ws, hs = [], []
-        for f in sorted(os.listdir(self.tiles_dir)):
-            if not f.lower().endswith(".png"):
-                continue
-            img = Image.open(os.path.join(self.tiles_dir, f)).convert("RGBA")
-            self._images[f] = img
-            ws.append(img.width)
-            hs.append(img.height)
-        if not self._images:
-            raise ValueError(f"no PNGs in {self.tiles_dir}")
-        if self.cell_size is None:
-            self.cell_size = (Counter(ws).most_common(1)[0][0],
-                              Counter(hs).most_common(1)[0][0])
-        if self.bg_color is None:
-            self.bg_color = self._estimate_bg_color()
-
-    def _estimate_bg_color(self):
-        """Most common opaque colour across the tileset (usually the sky)."""
-        counts = Counter()
-        for img in self._images.values():
-            a = np.asarray(img)
-            opaque = a[a[..., 3] > 200][:, :3]
-            if opaque.size:
-                # subsample for speed
-                for px in opaque[::7]:
-                    counts[tuple(int(v) for v in px)] += 1
-        return counts.most_common(1)[0][0] if counts else None
-
-    def _image_solid(self, base, ly, lx):
-        img = self._images.get(base)
-        if img is None:
-            return self.default_solid
-        cw, ch = self.cell_size
-        cols = max(1, img.width // cw)
-        rows = max(1, img.height // ch)
-        ly = min(ly, rows - 1)
-        lx = min(lx, cols - 1)
-        row = ly if self.y_from_top else (rows - 1 - ly)
-        crop = np.asarray(img.crop((lx * cw, row * ch, (lx + 1) * cw, (row + 1) * ch)))
-        if crop.size == 0:
-            return self.default_solid
-        empty = crop[..., 3] <= self.alpha_threshold
-        if self.bg_color is not None:
-            diff = np.abs(crop[..., :3].astype(int) - np.array(self.bg_color)).sum(axis=-1)
-            empty |= diff <= self.color_tolerance
-        return float((~empty).mean()) >= self.coverage_threshold
-
-    # -- public API -------------------------------------------------------
-    def is_solid(self, base, ly=0, lx=0) -> bool:
-        if base in (BACKGROUND, PADDING, UNCOLLAPSED):
-            return False
-        key = (base, ly, lx) if self.mode == "image" else base
-        if key in self._cache:
-            return self._cache[key]
-
-        if self.mode == "non_background":
-            val = True
-        elif self.mode == "classes":
-            cls = self.class_map.get(base)
-            if cls is None:
-                if base not in self._warned:
-                    self._warned.add(base)
-                    print(f"[solidity] no class for {base!r} -> "
-                          f"{'solid' if self.default_solid else 'passable'}")
-                val = self.default_solid
-            else:
-                val = cls.lower() in SOLID_CLASSES
-        elif self.mode == "image":
-            val = self._image_solid(base, ly, lx)
-        else:
-            raise ValueError(f"unknown mode {self.mode!r}")
-
-        self._cache[key] = val
-        return val
-
-    def classify(self, base) -> str:
-        return self.class_map.get(base, "unknown")
-
-
-def make_class_map_stub(tiles_dir) -> dict:
-    """Emit {tile_name: "TODO"} for every tile so it can be hand-labelled."""
-    names = sorted(f for f in os.listdir(tiles_dir) if f.lower().endswith(".png"))
-    stub = {BACKGROUND: "background"}
-    stub.update({n: "TODO" for n in names})
-    return stub
 
 
 # --------------------------------------------------------------------------
@@ -284,6 +133,17 @@ class LevelConfig:
 # --------------------------------------------------------------------------
 # Core structural analysis
 # --------------------------------------------------------------------------
+
+def is_solid(name):
+    """
+    Occupancy rule: every tile except the background is an object.
+
+    "B" is background and the padding/uncollapsed markers are not tiles, so
+    everything else contributes geometry. Complex clones fold to the core tile
+    occupying that cell, so both batches are measured in exactly the same way.
+    """
+    return name not in (BACKGROUND, PADDING, UNCOLLAPSED)
+
 
 def surface_rows(mask):
     """Topmost occupied row per column; -1 where the column is empty."""
@@ -307,8 +167,8 @@ def _runs(flags):
     return out
 
 
-def structural_metrics(grid, id_to_tile, solidity: SolidityModel,
-                       cfg: LevelConfig = LevelConfig(), ngram_size=3):
+def structural_metrics(grid, id_to_tile, cfg: LevelConfig = LevelConfig(),
+                       ngram_size=3):
     """
     Returns (metrics_dict, ngram_counter, debug_dict).
 
@@ -316,17 +176,15 @@ def structural_metrics(grid, id_to_tile, solidity: SolidityModel,
     audited (see dump_occupancy_ascii) and so callers can compute their own
     derived statistics without re-deriving the masks.
     """
-    names, lys, lxs = grid_to_arrays(grid, id_to_tile)
+    names, _, _ = grid_to_arrays(grid, id_to_tile)
     H, W = names.shape
 
     # ---- 1. occupancy ---------------------------------------------------
-    solid = np.zeros((H, W), dtype=bool)
     uncollapsed = names == UNCOLLAPSED
+    solid = np.zeros((H, W), dtype=bool)
     for y in range(H):
         for x in range(W):
-            if uncollapsed[y, x]:
-                continue
-            solid[y, x] = solidity.is_solid(names[y, x], lys[y, x], lxs[y, x])
+            solid[y, x] = is_solid(names[y, x])
 
     # ---- 2. components: ground vs floating ------------------------------
     # 4-connectivity: diagonal-only contact is not a shared surface.
@@ -591,14 +449,6 @@ def compression_ratio(name_grid):
 # Distribution comparison helpers
 # --------------------------------------------------------------------------
 
-def ngram_counts(name_grid, k=3):
-    c = Counter()
-    H, W = name_grid.shape
-    for y in range(H - k + 1):
-        for x in range(W - k + 1):
-            c[tuple(name_grid[y:y + k, x:x + k].flatten())] += 1
-    return c
-
 
 def js_distance(counts_a, counts_b):
     """Jensen-Shannon *distance* (sqrt of divergence), 0 = identical."""
@@ -611,32 +461,6 @@ def js_distance(counts_a, counts_b):
     b /= b.sum() or 1
     d = jensenshannon(a, b)
     return 0.0 if np.isnan(d) else float(d)
-
-
-def pattern_precision_recall(gen_counts, corpus_counts):
-    """
-    Treats the training corpus as ground truth for local structure.
-
-      precision : share of generated pattern instances that occur in the corpus
-                  -> low means the generator invents structures Mario never has
-      recall    : share of distinct corpus patterns that the generator produced
-                  -> low means mode collapse / limited vocabulary use
-      novel_rate: share of DISTINCT generated patterns unseen in the corpus
-
-    This catches both failure directions that a single KL number hides.
-    """
-    if not gen_counts:
-        return {"pattern_precision": 0.0, "pattern_recall": 0.0, "novel_rate": 0.0}
-    total = sum(gen_counts.values())
-    in_corpus = sum(v for k, v in gen_counts.items() if k in corpus_counts)
-    distinct_novel = sum(1 for k in gen_counts if k not in corpus_counts)
-    recall = (sum(1 for k in corpus_counts if k in gen_counts) / len(corpus_counts)
-              if corpus_counts else 0.0)
-    return {
-        "pattern_precision": round(in_corpus / total, 4),
-        "pattern_recall": round(recall, 4),
-        "novel_rate": round(distinct_novel / len(gen_counts), 4),
-    }
 
 
 def pairwise_diversity(name_grids):
@@ -655,27 +479,6 @@ def pairwise_diversity(name_grids):
         for j in range(i + 1, len(grids)):
             ds.append(float((grids[i] != grids[j]).mean()))
     return round(float(np.mean(ds)), 4) if ds else float("nan")
-
-
-def longest_verbatim_run(name_grid, corpus_grid, max_len=64):
-    """
-    Longest full-height column run that appears verbatim in the corpus.
-    Detects memorisation: WFC with large overlapping patterns often reproduces
-    long stretches of a source level, which inflates every fidelity metric.
-    """
-    if corpus_grid is None or name_grid.shape[0] != corpus_grid.shape[0]:
-        return 0
-    gen_cols = ["|".join(map(str, name_grid[:, x])) for x in range(name_grid.shape[1])]
-    cor_cols = ["|".join(map(str, corpus_grid[:, x])) for x in range(corpus_grid.shape[1])]
-    corpus_str = "\u0001".join(cor_cols)
-    best = 0
-    for i in range(len(gen_cols)):
-        for L in range(best + 1, min(max_len, len(gen_cols) - i) + 1):
-            if "\u0001".join(gen_cols[i:i + L]) in corpus_str:
-                best = L
-            else:
-                break
-    return best
 
 
 # --------------------------------------------------------------------------
@@ -719,8 +522,4 @@ def dump_occupancy_ascii(debug, path, max_width=None):
 
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) == 3 and sys.argv[1] == "--stub":
-        print(json.dumps(make_class_map_stub(sys.argv[2]), indent=2))
-    else:
-        print(__doc__)
+    print(__doc__)
