@@ -264,47 +264,57 @@ def analyze_complex_tiles(playable_tiles, id_to_tile, adjacencies):
 def initial_grid_prune(grid, tile_meta, blueprints, adjacencies, pad_id):
     playable_height = len(grid) - 2
     playable_width = len(grid[0]) - 2
-    
+
+    floor_only, roof_only = set(), set()
+    for t, dirs in adjacencies.items():
+        b = dirs.get("bottom", {})
+        if len(b) == 1 and pad_id in b:
+            floor_only.add(t)
+        tp = dirs.get("top", {})
+        if len(tp) == 1 and pad_id in tp:
+            roof_only.add(t)
+
+    # clone pieces grouped by their legal placement window
+    y_groups, x_groups = defaultdict(set), defaultdict(set)
+    for t, meta in tile_meta.items():
+        bp = blueprints[meta['base_name']]
+        y_groups[(meta['local_y'], bp['max_y'])].add(t)
+        x_groups[(meta['local_x'], bp['max_x'])].add(t)
+
+    x_rm = {}
+    for x in range(1, playable_width + 1):
+        rm = set()
+        for (lx, mx), tiles in x_groups.items():
+            left_x = x - lx
+            if left_x < 1 or left_x + mx > playable_width:
+                rm |= tiles
+        x_rm[x] = rm
+
+    n_full = len(grid[1][1]) if playable_height >= 1 and playable_width >= 1 else 0
+
     for y in range(1, playable_height + 1):
+        row_rm = set()
+        if y < playable_height:
+            row_rm |= floor_only
+        if y > 1:
+            row_rm |= roof_only
+        for (ly, my), tiles in y_groups.items():
+            top_y = y - ly
+            if top_y < 1 or top_y + my > playable_height:
+                row_rm |= tiles
+
+        base = None
         for x in range(1, playable_width + 1):
-            to_remove = set()
-            for tile_id in grid[y][x]:
-                
-                # 1. Structural Bounds Check
-                if tile_id in tile_meta:
-                    meta = tile_meta[tile_id]
-                    base_name = meta['base_name']
-                    max_y = blueprints[base_name]['max_y']
-                    max_x = blueprints[base_name]['max_x']
-                    
-                    top_y = y - meta['local_y']
-                    left_x = x - meta['local_x']
-                    bottom_y = top_y + max_y
-                    right_x = left_x + max_x
-                    
-                    if top_y < 1 or left_x < 1 or bottom_y > playable_height or right_x > playable_width:
-                        to_remove.add(tile_id)
-                        continue 
-                        
-                # 2. Mid-Air Boundary Trap
-                if y < playable_height:
-                    allowed_bottoms = adjacencies.get(tile_id, {}).get("bottom", {})
-                    if len(allowed_bottoms) == 1 and pad_id in allowed_bottoms:
-                        to_remove.add(tile_id)
-                        continue
-                        
-                if y > 1:
-                    allowed_tops = adjacencies.get(tile_id, {}).get("top", {})
-                    if len(allowed_tops) == 1 and pad_id in allowed_tops:
-                        to_remove.add(tile_id)
-                        continue
-                        
-            if to_remove:
-                grid[y][x] -= to_remove
-                
+            cell = grid[y][x]
+            if x_rm[x] or len(cell) != n_full:
+                grid[y][x] = cell - row_rm - x_rm[x]
+            else:
+                if base is None:
+                    base = frozenset(cell - row_rm)   # interior columns share a domain
+                grid[y][x] = set(base)
     return grid
 
-# --- OPTIMIZATION 1: MIN-HEAP RETRIEVAL ---
+
 def get_min_entropy_cell(grid, heap):
     while heap:
         entropy, _, y, x = heapq.heappop(heap)
@@ -323,7 +333,7 @@ def get_min_entropy_cell(grid, heap):
             
     return None 
 
-def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, state, pad_id, blueprints, tile_meta, b_id):
+def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, steps, state, pad_id, blueprints, tile_meta, b_id):
     possible_tiles = list(grid[y][x])    
     if not possible_tiles: 
         return []
@@ -331,22 +341,15 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
     playable_height = len(grid) - 2
     playable_width = len(grid[0]) - 2
     total_playable_cells = playable_height * playable_width
-    total_ratio_sum = sum(ratios.values()) or 1
+    total_ratio_sum = state['ratio_sum']
 
-    collapsed_playable_cells = sum(
-        1 for row_idx in range(1, len(grid) - 1)
-        for col_idx in range(1, len(grid[0]) - 1)
-        if not isinstance(grid[row_idx][col_idx], set)
-    )
-    progress_ratio = collapsed_playable_cells / total_playable_cells if total_playable_cells > 0 else 0.0
+    progress_ratio = state['cells_done'] / total_playable_cells if total_playable_cells > 0 else 0.0
 
-    for t in ratios.keys():
-        target_ratio = ratios.get(t, 1.0) / total_ratio_sum
-        desired_total = target_ratio * total_playable_cells
-        ideal_current = desired_total * progress_ratio
-        
-        history[t]['actual'].append(state['current'].get(t, 0))
-        history[t]['ideal'].append(ideal_current)
+    if history is not None:
+        for t in ratios.keys():
+            desired_total = (ratios.get(t, 1.0) / total_ratio_sum) * total_playable_cells
+            history[t]['actual'].append(state['current'].get(t, 0))
+            history[t]['ideal'].append(desired_total * progress_ratio)
     
     steps.append(state['collapsed_count'])
 
@@ -410,7 +413,7 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
                         is_illegal = True
                         break
 
-                    total_allowed_weight = sum(allowed.values())
+                    total_allowed_weight = cache.dir_total[d_key].get(tile, 0.0)
                     prob = n_weight / total_allowed_weight if total_allowed_weight > 0 else 0
                     directional_probs.append(prob)
 
@@ -495,6 +498,7 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
             if isinstance(grid[global_y][global_x], set):
                 grid[global_y][global_x] = piece['id']
                 collapsed_coords.append((global_y, global_x))
+                state['cells_done'] += 1
                 
                 if piece['id'] in state['current']:
                     state['current'][piece['id']] += 1
@@ -508,6 +512,7 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
         if isinstance(grid[y][x], set):
             grid[y][x] = chosen_tile
             collapsed_coords.append((y, x))
+            state['cells_done'] += 1 
             
             if chosen_tile in state['current']:
                 state['current'][chosen_tile] += 1
@@ -520,13 +525,44 @@ def collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, history, steps, s
                 
     return collapsed_coords
 
+class AdjCache:
+    __slots__ = ("allowed", "dir_total", "_c", "hits", "misses", "cap")
 
-def propagate(grid, y, x, adjacencies, tile_sizes, heap, timeout_check_callback=None):
+    def __init__(self, adjacencies, cap=200000):
+        self.allowed, self.dir_total = {}, {}
+        for d in ("top", "bottom", "left", "right"):
+            self.allowed[d] = {t: frozenset(dirs.get(d, {})) for t, dirs in adjacencies.items()}
+            self.dir_total[d] = {t: (sum(dirs.get(d, {}).values()) or 0.0)
+                                 for t, dirs in adjacencies.items()}
+        self._c = {d: {} for d in ("top", "bottom", "left", "right")}
+        self.hits = self.misses = 0
+        self.cap = cap
+
+    def union(self, dir_key, domain):
+        c = self._c[dir_key]
+        key = frozenset(domain)
+        u = c.get(key)
+        if u is not None:
+            self.hits += 1
+            return u
+        self.misses += 1
+        a = self.allowed[dir_key]
+        u = frozenset().union(*[a[t] for t in key if t in a]) if key else frozenset()
+        if len(c) >= self.cap:
+            c.clear()          # bound memory; hit rate barely moves
+        c[key] = u
+        return u
+
+    
+def propagate(grid, y, x, adjacencies, tile_sizes, heap, cache, tiebreak, timeout_check_callback=None):
     stack = [(y, x)]
     in_stack = {(y, x)}
-    
+    H = len(grid)           
+    W = len(grid[0])
+    ticks = 0
     while stack:
-        if timeout_check_callback:
+        ticks += 1
+        if timeout_check_callback and (ticks & 511) == 0:
             timeout_check_callback(grid)
             
         cy, cx = stack.pop()
@@ -543,49 +579,41 @@ def propagate(grid, y, x, adjacencies, tile_sizes, heap, timeout_check_callback=
         x_left = cx
         x_right = cx + width - 1
         
-        for dy in range(-1, height + 1):
-            for dx in range(-1, width + 1):
-                ny, nx = cy - dy, cx + dx 
-                
-                if 0 <= ny < len(grid) and 0 <= nx < len(grid[0]):
-                    if isinstance(grid[ny][nx], set):
-                        direction = get_direction(ny, nx, y_top, y_bottom, x_left, x_right)
-                        if direction is not None:
-                            updated = update_cell(grid, ny, nx, cy, cx, direction, adjacencies, heap)
-                            
-                            if updated and (ny, nx) not in in_stack:
-                                stack.append((ny, nx))
-                                in_stack.add((ny, nx))
+        for nx in range(max(0, x_left), min(W, x_right + 1)):
+            for ny, direction in ((y_top - 1, 0), (y_bottom + 1, 1)):
+                if 0 <= ny < H and isinstance(grid[ny][nx], set):
+                    if update_cell(grid, ny, nx, cy, cx, direction, adjacencies, heap, cache, tiebreak):
+                        if (ny, nx) not in in_stack:
+                            stack.append((ny, nx))
+                            in_stack.add((ny, nx))
+        for ny in range(max(0, y_top), min(H, y_bottom + 1)):
+            for nx, direction in ((x_left - 1, 2), (x_right + 1, 3)):
+                if 0 <= nx < W and isinstance(grid[ny][nx], set):
+                    if update_cell(grid, ny, nx, cy, cx, direction, adjacencies, heap, cache, tiebreak):
+                        if (ny, nx) not in in_stack:
+                            stack.append((ny, nx))
+                            in_stack.add((ny, nx))
 
-# --- OPTIMIZATION 2: VECTORIZED SET INTERSECTIONS ---
-def update_cell(grid, target_y, target_x, source_y, source_x, direction, adjacencies, heap):
-    original_len = len(grid[target_y][target_x])
-    source_contents = grid[source_y][source_x]
+def update_cell(grid, target_y, target_x, source_y, source_x, direction, adjacencies, heap, cache, tiebreak):
+    target = grid[target_y][target_x]
+    original_len = len(target)
 
-    if not isinstance(source_contents, set):
-        possible_sources = [source_contents]
-    else:
-        possible_sources = source_contents
-        
     dir_key = DIR_MAP.get(direction)
     if not dir_key:
         return False
 
-    valid_targets = set()
-    for src_tile in possible_sources:
-        allowed = adjacencies.get(src_tile, {}).get(dir_key, {})
-        if allowed:
-            valid_targets.update(allowed.keys())
-            
-    # C-backend Set intersection instantly resolves allowed domain
-    grid[target_y][target_x] &= valid_targets
+    source_contents = grid[source_y][source_x]
+    if isinstance(source_contents, set):
+        valid_targets = cache.union(dir_key, source_contents)
+    else:
+        valid_targets = cache.allowed[dir_key].get(source_contents) or frozenset()
 
-    new_len = len(grid[target_y][target_x])
+    target &= valid_targets                 # in-place, no new set allocated
+
+    new_len = len(target)
     if new_len < original_len:
-        # Push to Min-Heap with random tie-breaker
-        heapq.heappush(heap, (new_len, random.random(), target_y, target_x))
+        heapq.heappush(heap, (new_len, tiebreak[target_y][target_x], target_y, target_x))
         return True
-        
     return False
 
 
@@ -619,6 +647,9 @@ class MaxRetriesException(Exception):
 
 def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_id, playable_tiles, b_id, frames=False): 
     global_start_time = time.time()
+    blueprints, tile_meta = analyze_complex_tiles(playable_tiles, id_to_tile, adjacencies)
+    cache = AdjCache(adjacencies)
+    ratio_sum = sum(ratios.values()) or 1
     
     def check_timeout(current_grid):
         if time.time() - global_start_time > timeout:
@@ -628,12 +659,12 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
             grid = initialize_grid(h, w, playable_tiles)
             grid = pad_grid(grid, pad_value=pad_id)
 
-            blueprints, tile_meta = analyze_complex_tiles(playable_tiles, id_to_tile, adjacencies)
+            
             print("Pruning grid...")
             grid = initial_grid_prune(grid, tile_meta, blueprints, adjacencies, pad_id)
             print("Starting...")
 
-            generation_history = {t: {'actual': [], 'ideal': []} for t in ratios.keys()}
+            generation_history = {t: {'actual': [], 'ideal': []} for t in ratios.keys()} if frames else None
             collapse_steps = []
             
             placements = 0 
@@ -643,27 +674,15 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
                 'current': {t: 0 for t in ratios.keys()},
                 'roof': {t: 0 for t in ratios.keys()},
                 'floor': {t: 0 for t in ratios.keys()},
-                'collapsed_count': 0
+                'collapsed_count': 0,
+                'cells_done': 0,
+                'ratio_sum': ratio_sum
             }
             playable_height = len(grid) - 2 
             playable_width = len(grid[0]) - 2 
 
-            for y in range(1, playable_height + 1):
-                for x in range(1, playable_width + 1):
-                    to_remove = set()
-                    for tile_id in grid[y][x]:
-                        if y < playable_height:
-                            allowed_bottoms = adjacencies.get(tile_id, {}).get("bottom", {})
-                            if len(allowed_bottoms) == 1 and pad_id in allowed_bottoms:
-                                to_remove.add(tile_id)
-                        
-                        if y > 1:
-                            allowed_tops = adjacencies.get(tile_id, {}).get("top", {})
-                            if len(allowed_tops) == 1 and pad_id in allowed_tops:
-                                to_remove.add(tile_id)
-                                
-                    grid[y][x] -= to_remove          
-            
+            tiebreak = [[random.random() for _ in range(len(grid[0]))]
+                        for _ in range(len(grid))]
             # --- Initialize Priority Queue ---
             heap = []
             for y in range(1, playable_height + 1):
@@ -675,9 +694,9 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
             w_len = len(grid[0])
             for x in range(w_len):
                 if grid[0][x] == pad_id: 
-                    propagate(grid, 0, x, adjacencies, tile_sizes, heap, check_timeout)       
+                    propagate(grid, 0,       x, adjacencies, tile_sizes, heap, cache, tiebreak, check_timeout)       
                 if grid[h_len-1][x] == pad_id: 
-                    propagate(grid, h_len-1, x, adjacencies, tile_sizes, heap, check_timeout)
+                    propagate(grid, h_len-1, x, adjacencies, tile_sizes, heap, cache, tiebreak, check_timeout)
 
             while True:
                 check_timeout(grid)
@@ -692,11 +711,11 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
                 y, x = cell
                 if not isinstance(grid[y][x], set): continue
                     
-                collapsed_coords = collapse_cell(grid, y, x, adjacencies, tile_sizes, ratios, generation_history, collapse_steps, state, pad_id, blueprints, tile_meta, b_id)
+                collapsed_coords = collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, generation_history, collapse_steps, state, pad_id, blueprints, tile_meta, b_id)
                 
                 if collapsed_coords:
                     for cy, cx in collapsed_coords:
-                        propagate(grid, cy, cx, adjacencies, tile_sizes, heap, check_timeout)
+                        propagate(grid, cy,     cx, adjacencies, tile_sizes, heap, cache, tiebreak, check_timeout)
                     placements += 1
 
                     if frames and placements % 50 == 0:
