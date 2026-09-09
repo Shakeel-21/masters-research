@@ -296,6 +296,7 @@ def load_macro_templates(dataset_dir, layout="blueprint", strip_split=True,
             "size": len(cells),
             "footprint": footprint,
             "collisions": collisions,
+            "pieces": frozenset(core_of),
             "distinct_tiles": len(set(cells.values())),
             "interior_holes": interior,
             "peripheral_holes": peripheral,
@@ -494,6 +495,35 @@ def count_exact(grids, template, index):
     return total, len(hit)
 
 
+def count_placements(raw_pairs, templates):
+    """
+    How many times the solver actually STAMPED each macro.
+
+    Counted from the unfolded grids, where every cell still carries its clone
+    id, so this is placement by the solver rather than pattern matching. Each
+    placement writes one cell per blueprint piece, so the count of any single
+    piece equals the number of placements; the maximum across pieces is used
+    because a piece can be dropped when two share a cell.
+
+    Returns {macro: (placements, clone_cells)}.
+    """
+    owner = {}
+    for macro, t in templates.items():
+        for piece in t.get("pieces", ()):
+            owner[piece] = macro
+    tally = {macro: Counter() for macro in templates}
+    for grid, id_to_tile in raw_pairs:
+        for row in grid:
+            for cell in row:
+                if isinstance(cell, (set, frozenset)):
+                    continue
+                macro = owner.get(id_to_tile.get(cell))
+                if macro is not None:
+                    tally[macro][cell] += 1
+    return {m: ((max(c.values()) if c else 0), sum(c.values()))
+            for m, c in tally.items()}
+
+
 # --------------------------------------------------------------------------
 # Partial emergence via sub-windows
 # --------------------------------------------------------------------------
@@ -555,7 +585,7 @@ SIZE_BUCKETS = ((2, "1-2"), (4, "3-4"), (9, "5-9"), (16, "10-16"), (10 ** 9, "17
 
 def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
                      out_dir=None, diagnostics=None, ratio_check=None,
-                     verbose=True):
+                     complex_raw=None, verbose=True):
     """Full analysis. Returns a dict; optionally writes a CSV and summary."""
     if not templates:
         raise ValueError("no macro templates - check the clone naming "
@@ -570,6 +600,8 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
     core_wins = {k: window_counter(core_grids, k) for k in k_values}
     core_cells = sum(g.size for g in core_grids)
     comp_index = build_position_index(complex_grids) if complex_grids else None
+    complex_cells = sum(g.size for g in complex_grids) if complex_grids else 0
+    placements = count_placements(complex_raw, templates) if complex_raw else {}
 
     rows = []
     for name, t in reps.items():
@@ -598,6 +630,14 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
             c_exact, c_levels = count_exact(complex_grids, t, comp_index)
             row["complex_exact_count"] = c_exact
             row["complex_levels_hit"] = c_levels
+            if placements:
+                p_count, p_cells = placements.get(name, (0, 0))
+                row["solver_placements"] = p_count
+                row["clone_cells_written"] = p_cells
+            in_core, in_comp = n_exact > 0, c_exact > 0
+            row["where"] = ("both" if in_core and in_comp else
+                            "core_only" if in_core else
+                            "complex_only" if in_comp else "neither")
         rows.append(row)
 
     rows.sort(key=lambda r: (-r["specified_cells"], r["macro"]))
@@ -607,7 +647,7 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
     placed = [r for r in rows if r.get("complex_exact_count", 0) > 0] if comp_index else []
 
     S = []
-    S.append("=== COMPLEX STRUCTURE EMERGENCE IN CORE GENERATIONS ===")
+    S.append("=== COMPLEX MACRO STRUCTURES: CORE vs COMPLEX ===")
     S.append(f"Macro definitions in the complex vocabulary: {len(templates)}")
     S.append(f"Distinct structures (after deduplication): {n_struct}")
     S.append(f"Core generations searched: {len(core_grids)} ({core_cells} cells)")
@@ -618,43 +658,92 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
                     else f"  MISMATCH: rules-only={ratio_check['rules_only']}, "
                          f"ratios-only={ratio_check['ratios_only']}"))
 
+    core_tot = sum(r["core_exact_count"] for r in rows)
+    comp_tot = sum(r.get("complex_exact_count", 0) for r in rows)
+    n_core_seen = len(emerged)
+    n_comp_seen = len(placed)
+
     S.append("")
-    S.append("1. EXACT EMERGENCE")
-    S.append(f"Structures the Core generator produces unaided: "
-             f"{len(emerged)}/{n_struct} ({100*len(emerged)/n_struct:.1f}%)")
-    S.append(f"Structures unique to the complex vocabulary: "
-             f"{n_struct-len(emerged)}/{n_struct} "
-             f"({100*(n_struct-len(emerged))/n_struct:.1f}%)")
-    tot = sum(r["core_exact_count"] for r in rows)
-    S.append(f"Total emergent occurrences in Core: {tot} "
-             f"({1000.0*tot/core_cells:.3f} per 1000 cells)")
-    if comp_index:
-        S.append(f"Structures actually present in Complex output: "
-                 f"{len(placed)}/{n_struct} "
-                 f"({100*len(placed)/n_struct:.1f}%) - macros the solver never "
-                 f"placed cannot be credited with adding structure")
+    S.append("1. WHERE THE MACRO STRUCTURES APPEAR")
+    S.append("   Each of the declared structures is searched for, as a tile")
+    S.append("   pattern, in both batches. In Core any hit is coincidence - Core")
+    S.append("   has no macros. In Complex a hit is usually the solver having")
+    S.append("   stamped it deliberately.")
+    S.append("")
+    S.append(f"   {'':<34}{'Core':>12}{'Complex':>12}")
+    S.append(f"   {'pattern occurrences':<34}{core_tot:>12}{comp_tot:>12}")
+    S.append(f"   {'per 1000 cells':<34}"
+             f"{1000.0*core_tot/core_cells:>12.3f}"
+             + (f"{1000.0*comp_tot/complex_cells:>12.3f}" if complex_cells
+                else f"{'-':>12}"))
+    if placements:
+        stamped = sum(r.get("solver_placements", 0) for r in rows)
+        S.append(f"   {'of which stamped by the solver':<34}{0:>12}{stamped:>12}")
+        S.append(f"   {'so arising by coincidence':<34}{core_tot:>12}"
+                 f"{max(0, comp_tot - stamped):>12}")
+    S.append(f"   {'distinct structures present':<34}"
+             f"{f'{n_core_seen}/{n_struct}':>12}"
+             f"{f'{n_comp_seen}/{n_struct}':>12}")
+
+    if comp_index is not None:
+        w = Counter(r.get("where") for r in rows)
+        S.append("")
+        S.append(f"   Overlap across the {n_struct} declared structures:")
+        S.append(f"     {'in both batches':<26}{w.get('both', 0):>4}"
+                 f"   Core reproduces it and the solver placed it")
+        S.append(f"     {'Core only':<26}{w.get('core_only', 0):>4}"
+                 f"   Core builds it; the solver never placed it")
+        S.append(f"     {'Complex only':<26}{w.get('complex_only', 0):>4}"
+                 f"   genuinely contributed by the macro vocabulary")
+        S.append(f"     {'neither':<26}{w.get('neither', 0):>4}"
+                 f"   never placed and never emerged - dead weight")
+        S.append("")
+        S.append(f"   The 'Complex only' count is the headline: {w.get('complex_only', 0)} "
+                 f"of {n_struct} structures")
+        S.append(f"   exist in the output because of the complex tileset and for "
+                 f"no other reason.")
 
     uni = [r for r in rows if r.get("distinct_tiles") == 1]
     if uni:
         uni_em = sum(1 for r in uni if r["core_emerges"])
-        S.append(f"Of these, {len(uni)} structures are built from a single "
-                 f"repeated tile ({uni_em} emerge in Core). A uniform slab is "
-                 f"easy for the core generator to reproduce at any size, so "
-                 f"read the size breakdown below alongside distinct_tiles.")
+        S.append("")
+        S.append(f"   Caveat on the Core column: {len(uni)} of the {n_struct} "
+                 f"structures are a single")
+        S.append(f"   tile repeated ({uni_em} of them turn up in Core). A uniform slab "
+                 f"is trivial for")
+        S.append(f"   the core generator to reproduce at any size, so it is not "
+                 f"evidence of")
+        S.append(f"   structural capability. The table below separates them out.")
 
     S.append("")
-    S.append("Emergence rate by structure size (specified cells):")
-    buckets = defaultdict(lambda: [0, 0])
+    S.append("Core emergence by structure size and tile variety:")
+    S.append(f"  {'cells':>7}  {'single-tile slab':>18}  {'multi-tile':>14}"
+             f"  {'all':>9}")
+    grid = defaultdict(lambda: [0, 0, 0, 0])   # [slab_n, slab_em, multi_n, multi_em]
     for r in rows:
+        slab = r.get("distinct_tiles") == 1
         for lim, lab in SIZE_BUCKETS:
             if r["specified_cells"] <= lim:
-                buckets[lab][0] += 1
-                buckets[lab][1] += r["core_emerges"]
+                g = grid[lab]
+                g[0 if slab else 2] += 1
+                g[(0 if slab else 2) + 1] += r["core_emerges"]
                 break
+
+    def cell(n, e):
+        return "-" if n == 0 else f"{e}/{n}"
+
+    tot = [0, 0, 0, 0]
     for _, lab in SIZE_BUCKETS:
-        if lab in buckets:
-            n, e = buckets[lab]
-            S.append(f"  {lab:>6} cells: {e}/{n} emerge ({100*e/n:.1f}%)")
+        if lab not in grid:
+            continue
+        g = grid[lab]
+        tot = [t + v for t, v in zip(tot, g)]
+        S.append(f"  {lab:>7}  {cell(g[0], g[1]):>18}  {cell(g[2], g[3]):>14}"
+                 f"  {cell(g[0]+g[2], g[1]+g[3]):>9}")
+    S.append(f"  {'total':>7}  {cell(tot[0], tot[1]):>18}  {cell(tot[2], tot[3]):>14}"
+             f"  {cell(tot[0]+tot[2], tot[1]+tot[3]):>9}")
+    S.append("  The multi-tile column is the one that speaks to structural")
+    S.append("  capability; a slab of one repeated tile emerges at any size.")
 
     inv_bad = [r["macro"] for r in rows if r.get("start_invariant") is False]
     if inv_bad:
@@ -672,11 +761,12 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
             return (sum(1 for r in g if r.get("complex_exact_count", 0) > 0),
                     len(g))
         ph, nh = placed_rate(holed), placed_rate(solid)
-        S.append("")
-        S.append("Placement vs interior holes (a hole flanked by pieces must be "
-                 "fillable by something the rules allow):")
-        S.append(f"  with interior holes:    {ph[0]}/{ph[1]} placed at least once")
-        S.append(f"  without interior holes: {nh[0]}/{nh[1]} placed at least once")
+        if ph[1]:
+            S.append("")
+            S.append("Placement vs interior holes (a hole flanked by pieces must "
+                     "be fillable by something the rules allow):")
+            S.append(f"  with interior holes:    {ph[0]}/{ph[1]} placed at least once")
+            S.append(f"  without interior holes: {nh[0]}/{nh[1]} placed at least once")
 
     S.append("")
     S.append("2. PARTIAL EMERGENCE (is the local texture present in Core?)")

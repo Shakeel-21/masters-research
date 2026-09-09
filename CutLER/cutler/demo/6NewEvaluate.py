@@ -33,11 +33,11 @@ import imagehash
 from scipy.stats import entropy, mannwhitneyu
 
 from _55generate import run_generation
-from demo.metrics_topology import (
+from metrics_topology import (
     LevelConfig, structural_metrics, dump_occupancy_ascii,
     pairwise_diversity, js_distance, parse_cell_name,
 )
-from demo.complex_structure import (
+from complex_structure import (
     load_macro_templates, fold_grid, emergence_report, layout_diagnostics,
     cross_check_ratios,
 )
@@ -45,12 +45,12 @@ from demo.complex_structure import (
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-CORE_FOLDER = os.path.join("Generation", "0CoreDataset/mario_9_data")
-COMPLEX_FOLDER = os.path.join("Generation", "0ComplexDataset/mario_9_data")
-BASELINE_FOLDER = os.path.join("Generation", "Baselines/mario_9")
+CORE_FOLDER = os.path.join("Generation", "0CoreDataset/mario-1-2_data")
+COMPLEX_FOLDER = os.path.join("Generation", "0ComplexDataset/mario-1-2_data")
+BASELINE_FOLDER = os.path.join("Generation", "Baselines/mario 1-2")
 
-GRID_WIDTH = 230
-GRID_HEIGHT = 14
+GRID_WIDTH = 160
+GRID_HEIGHT = 13
 NUM_LEVELS = 20
 
 NGRAM_K = 3                     # window size for the n-gram statistics
@@ -102,6 +102,7 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
     batch_results = []
     batch_global_ngrams = Counter()
     folded_grids = []
+    raw_grids = []
 
     print(f"--- Evaluating {batch_label} Batch Matrices ---")
     for idx, data in enumerate(generated_data):
@@ -142,6 +143,7 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
 
         batch_global_ngrams.update(level_ngrams)
         folded_grids.append(fold_grid(grid, id_to_tile))
+        raw_grids.append((grid, id_to_tile))
 
         if idx == 0 and debug_dir:
             dump_occupancy_ascii(
@@ -165,7 +167,8 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
     print(f"{batch_label} intra-batch diversity "
           f"(mean pairwise Hamming): {diversity}")
 
-    extras = {"diversity": diversity, "folded_grids": folded_grids}
+    extras = {"diversity": diversity, "folded_grids": folded_grids,
+              "raw_grids": raw_grids}
     return batch_results, failed_generations, batch_global_ngrams, extras
 
 
@@ -282,7 +285,8 @@ def cross_batch_analysis(core_results, complex_results, baseline_dir,
 # ===========================================================================
 # Macro emergence
 # ===========================================================================
-def run_emergence(complex_folder, core_grids, complex_grids, baseline_dir):
+def run_emergence(complex_folder, core_grids, complex_grids, baseline_dir,
+                  complex_raw=None):
     """
     How many of the complex macros does the Core generator build unaided?
 
@@ -306,6 +310,7 @@ def run_emergence(complex_folder, core_grids, complex_grids, baseline_dir):
         k_values=EMERGENCE_K,
         diagnostics=layout_diagnostics(complex_folder),
         ratio_check=cross_check_ratios(complex_folder, templates),
+        complex_raw=complex_raw,
         out_dir=baseline_dir,
     )
 
@@ -346,7 +351,8 @@ def main():
         run_emergence(COMPLEX_FOLDER,
                       core_extras["folded_grids"],
                       complex_extras.get("folded_grids"),
-                      BASELINE_FOLDER)
+                      BASELINE_FOLDER,
+                      complex_raw=complex_extras.get("raw_grids"))
 
     if all_results:
         df = pd.DataFrame(all_results).drop(columns=["Path"])

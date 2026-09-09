@@ -138,6 +138,17 @@ class LevelReconstructor:
         # ---------------------------------------------------------
         # PHASE 1.1: Complex ROIs (PASS A)
         # ---------------------------------------------------------
+
+        core_maps = {}
+        for core_key, core_data in core_sorted:
+            if not core_data['is_valid']: continue
+            try:
+                core_maps[core_key] = cv2.matchTemplate(
+                    level_img_bgr, core_data['img_bgr'],
+                    cv2.TM_SQDIFF_NORMED, mask=core_data['mask'])
+            except cv2.error:
+                continue
+
         for comp_key, comp_data in complex_sorted:
             if not comp_data['is_valid']: continue
             try:
@@ -150,28 +161,33 @@ class LevelReconstructor:
                     comp_h, comp_w = comp_data['h'], comp_data['w']
                     if gy + comp_h > h or gx + comp_w > w: continue
 
+                    claimed = visited_mask_A[gy:gy+comp_h, gx:gx+comp_w]
+                    if claimed.mean() > 0.60:
+                        continue
+
                     buffer = 2
                     roi_y1 = max(0, gy - buffer)
                     roi_y2 = min(h, gy + comp_h + buffer)
                     roi_x1 = max(0, gx - buffer)
                     roi_x2 = min(w, gx + comp_w + buffer)
                     
-                    roi_bgr = level_img_bgr[roi_y1:roi_y2, roi_x1:roi_x2]
 
                     roi_candidates = []
                     for core_key, core_data in core_sorted:
-                        if not core_data['is_valid']: continue
-                        if roi_bgr.shape[0] < core_data['h'] or roi_bgr.shape[1] < core_data['w']: continue
-
-                        c_res = cv2.matchTemplate(roi_bgr, core_data['img_bgr'], cv2.TM_SQDIFF_NORMED, mask=core_data['mask'])
-                        c_locs = np.where(c_res <= self.MATCH_THRESHOLD)
-                        
-                        for ly, lx in zip(*c_locs):
-                            error = c_res[ly, lx]
-                            weighted_score = (1.0 - error) * core_data['area']
+                        c_map = core_maps.get(core_key)
+                        if c_map is None: continue
+                        ch_, cw_ = core_data['h'], core_data['w']
+                        # valid top-left positions inside the ROI
+                        ry2 = min(roi_y2 - ch_ + 1, c_map.shape[0])
+                        rx2 = min(roi_x2 - cw_ + 1, c_map.shape[1])
+                        if ry2 <= roi_y1 or rx2 <= roi_x1: continue
+                        window = c_map[roi_y1:ry2, roi_x1:rx2]
+                        ys, xs = np.where(window <= self.MATCH_THRESHOLD)
+                        for wy, wx in zip(ys, xs):
+                            error = window[wy, wx]
                             roi_candidates.append({
-                                "score": float(weighted_score),
-                                "x": int(lx), "y": int(ly),
+                                "score": float((1.0 - error) * core_data['area']),
+                                "x": int(roi_x1 + wx), "y": int(roi_y1 + wy),   # global now
                                 "core_key": core_key, "core_data": core_data
                             })
                             
@@ -179,22 +195,30 @@ class LevelReconstructor:
 
                     for cand in roi_candidates:
                         core_key, core_data = cand["core_key"], cand["core_data"]
-                        lx, ly = cand["x"], cand["y"]
-                        cw, ch = core_data['w'], core_data['h']
-                        
-                        global_x, global_y = roi_x1 + lx, roi_y1 + ly
-                        if global_y + ch > h or global_x + cw > w: continue
+                        for cand in roi_candidates:
+                            core_key, core_data = cand["core_key"], cand["core_data"]
+                            global_x, global_y = cand["x"], cand["y"]
+                            cw, ch = core_data['w'], core_data['h']
+
+                            if global_y + ch > h or global_x + cw > w: continue
+                       
 
                         c_alpha = core_data['img_bgra'][:, :, 3] > 127
                         c_shrunk = cv2.erode((c_alpha.astype(np.uint8)*255), shrink_kernel, iterations=1) > 127
                         if not np.any(c_shrunk): c_shrunk = c_alpha
 
-                        if np.any(visited_mask_A[global_y:global_y+ch, global_x:global_x+cw][c_shrunk]):
+                        total_pixels = np.sum(c_shrunk)
+                        if total_pixels == 0: continue
+                        overlap = np.sum(visited_mask_A[global_y:global_y+ch,
+                                                        global_x:global_x+cw][c_shrunk])
+                        if (overlap / total_pixels) >= 0.30:
                             continue
 
                         # Generate unique clone keys for complex rules
-                        grid_y = round((global_y - gy) / self.cell_h) if self.cell_h > 0 else 0
-                        grid_x = round((global_x - gx) / self.cell_w) if self.cell_w > 0 else 0
+                        dy = global_y - gy
+                        dx = global_x - gx
+                        grid_y = max(0, (dy + self.cell_h // 2) // self.cell_h) if self.cell_h > 0 else 0
+                        grid_x = max(0, (dx + self.cell_w // 2) // self.cell_w) if self.cell_w > 0 else 0
                         clone_id = f"{comp_key[:-4]}_{core_key[:-4]}_y{grid_y}_x{grid_x}"
                         
                         if clone_id not in self.dynamic_templates:
@@ -213,26 +237,25 @@ class LevelReconstructor:
         # PHASE 1.2: Generic Fill (Global Area-Weighted NMS Voting)
         # ---------------------------------------------------------
         global_candidates = []
-        
+
         for core_key, core_data in core_sorted:
-            if not core_data['is_valid']: continue
-            try:
-                res = cv2.matchTemplate(level_img_bgr, core_data['img_bgr'], cv2.TM_SQDIFF_NORMED, mask=core_data['mask'])
-                locs = np.where(res <= self.MATCH_THRESHOLD)
-                
-                for y, x in zip(*locs):
-                    error = res[y, x]
-                    weighted_score = (1.0 - error) * core_data['area']
-                    
-                    global_candidates.append({
-                        "box": [int(x), int(y), int(core_data['w']), int(core_data['h'])],
-                        "score": float(weighted_score),
-                        "x": int(x), "y": int(y),
-                        "core_key": core_key,
-                        "core_data": core_data
-                    })
-            except cv2.error:
-                continue
+            res = core_maps.get(core_key)
+            if res is None: continue
+
+            locs = np.where(res <= self.MATCH_THRESHOLD)
+
+            for y, x in zip(*locs):
+                error = res[y, x]
+                weighted_score = (1.0 - error) * core_data['area']
+
+                global_candidates.append({
+                    "box": [int(x), int(y), int(core_data['w']), int(core_data['h'])],
+                    "score": float(weighted_score),
+                    "x": int(x), "y": int(y),
+                    "core_key": core_key,
+                    "core_data": core_data
+                })
+            
 
         if global_candidates:
             boxes = [c["box"] for c in global_candidates]
@@ -613,12 +636,7 @@ class LevelReconstructor:
             self.template_cache = self._load_templates_for_level(level_stem)
             
             if not self.template_cache:
-                continue
-
-            valid_t = [t for t in self.template_cache.values() if t['is_valid']]
-            if valid_t:
-                self.cell_w = min(t['w'] for t in valid_t)
-                self.cell_h = min(t['h'] for t in valid_t)
+                continue          
 
             self.unmatched_templates = set(self.template_cache.keys())
             
@@ -635,7 +653,7 @@ class LevelReconstructor:
 
 
 if __name__ == "__main__":
-    base_dir = "output_segments/NewMixedSizes"
+    base_dir = "output_segments/1MixedSizedTest"
     
     reconstructor = LevelReconstructor(
         segment_path=base_dir,
@@ -646,5 +664,5 @@ if __name__ == "__main__":
     )
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/NewMixedSizes"
+        base_output_dir="Generation/0ComplexDataset"
     )
