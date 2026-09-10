@@ -214,6 +214,11 @@ class LevelReconstructor:
                         if (overlap / total_pixels) >= 0.30:
                             continue
 
+                        region = visited_mask_A[global_y:global_y+ch, global_x:global_x+cw]
+                        free = c_alpha & ~region
+                        if not np.any(free): continue
+                        
+
                         # Generate unique clone keys for complex rules
                         dy = global_y - gy
                         dx = global_x - gx
@@ -224,8 +229,8 @@ class LevelReconstructor:
                         if clone_id not in self.dynamic_templates:
                             self.dynamic_templates[clone_id] = core_data['img_bgra']
                             
-                        id_grid_A[global_y:global_y+ch, global_x:global_x+cw][c_alpha] = clone_id
-                        visited_mask_A[global_y:global_y+ch, global_x:global_x+cw][c_alpha] = True
+                        id_grid_A[global_y:global_y+ch, global_x:global_x+cw][free] = clone_id
+                        visited_mask_A[global_y:global_y+ch, global_x:global_x+cw][free] = True
                         placed_instances_A.append((clone_id, global_x, global_y, cw, ch))
                         
                         self.used_templates.add(core_data['filepath'])
@@ -304,12 +309,12 @@ class LevelReconstructor:
         is_claimed_b_A = (id_grid_A == "B")
         raw_conflict_A = is_occupied_source & is_claimed_b_A
         # Erosion requires the entire 4x4 buffer to be True (conflicting) to trigger UNKNOWN
-        significant_conflict_A = cv2.erode(raw_conflict_A.astype(np.uint8), pruning_buffer_kernel, iterations=1).astype(bool)
+        significant_conflict_A = cv2.morphologyEx(raw_conflict_A.astype(np.uint8), cv2.MORPH_OPEN, pruning_buffer_kernel).astype(bool)
         id_grid_A[significant_conflict_A] = "UNKNOWN"
 
         is_claimed_b_B = (id_grid_B == "B")
         raw_conflict_B = is_occupied_source & is_claimed_b_B
-        significant_conflict_B = cv2.erode(raw_conflict_B.astype(np.uint8), pruning_buffer_kernel, iterations=1).astype(bool)
+        significant_conflict_B = cv2.morphologyEx(raw_conflict_B.astype(np.uint8), cv2.MORPH_OPEN, pruning_buffer_kernel).astype(bool)
         id_grid_B[significant_conflict_B] = "UNKNOWN"
 
         if self.cell_w > 0 and self.cell_h > 0:
@@ -381,6 +386,18 @@ class LevelReconstructor:
                         
         self.adjacency_rules = real_rules
 
+        for t_id, rules in self.adjacency_rules.items():
+            if t_id in ["B", "P", "UNKNOWN"]: 
+                continue
+                
+            for d in ["top", "bottom", "left", "right"]:
+                # Isolate active neighbors, ignoring padding
+                active_neighbors = [n for n in rules[d].keys() if n != "P"]
+                
+                # If the tile only sees itself, it is in a trap. Add B to allow an exit.
+                if len(active_neighbors) == 1 and active_neighbors[0] == t_id:
+                    self.adjacency_rules[t_id][d]["B"] += 1
+
         # Create output visualization
         blank_grid_A = np.zeros((h, w, 4), dtype=np.uint8)
         for _, x, y, cw, ch in placed_instances_A:
@@ -396,10 +413,14 @@ class LevelReconstructor:
         if target_dict is None:
             target_dict = self.adjacency_rules
             
-        TOLERANCE = 12 
+        # Calculate 60% thickness based on the largest dimension
+        thickness_threshold = max(1, int(max(self.cell_w, self.cell_h) * 0.60))
+
+        # The raycast only goes as deep as the longest check requires
+        TOLERANCE = max(6, thickness_threshold) 
         EDGE_INSET = 2 
         
-        def get_smart_neighbors(r_start, r_end, c_start, c_end):
+        def get_smart_neighbors(r_start, r_end, c_start, c_end, direction, origin_id):
             r0 = max(0, min(r_start, level_h))
             r1 = max(0, min(r_end, level_h))
             c0 = max(0, min(c_start, level_w))
@@ -408,18 +429,62 @@ class LevelReconstructor:
             if r0 >= r1 or c0 >= c1:
                 return []
 
-            slice_values = id_grid[r0:r1, c0:c1].flatten()
-            unique_vals = np.unique(slice_values)
+            slice_values = id_grid[r0:r1, c0:c1]
 
-            if "UNKNOWN" in unique_vals:
-                return []
+            if direction == "left":
+                layers = [slice_values[:, i] for i in range(slice_values.shape[1]-1, -1, -1)]
+            elif direction == "right":
+                layers = [slice_values[:, i] for i in range(slice_values.shape[1])]
+            elif direction == "top":
+                layers = [slice_values[i, :] for i in range(slice_values.shape[0]-1, -1, -1)]
+            elif direction == "bottom":
+                layers = [slice_values[i, :] for i in range(slice_values.shape[0])]
+                
+            found_neighbors = set()
+            consecutive_b_layers = 0
+            self_tile_thickness = 0
+            passed_gap = False 
+            saw_unknown = False # NEW: Track if we enter a missing block void
             
-            non_background = [v for v in unique_vals if v != "B"]
-            
-            if len(non_background) > 0:
-                return non_background
-            else:
-                return ["B"] 
+            for layer in layers:
+                unique_in_layer = np.unique(layer)
+                
+                if "UNKNOWN" in unique_in_layer:
+                    passed_gap = True 
+                    saw_unknown = True # Flag that we are inside a void
+                    continue 
+                    
+                non_b_p = [v for v in unique_in_layer if v not in ["B", "P"]]
+                
+                if len(non_b_p) > 0:
+                    consecutive_b_layers = 0 
+                    
+                    if len(non_b_p) == 1 and non_b_p[0] == origin_id:
+                        if passed_gap:
+                            found_neighbors.add(origin_id)
+                            return list(found_neighbors)
+                            
+                        self_tile_thickness += 1
+                        if self_tile_thickness >= thickness_threshold:
+                            found_neighbors.add(origin_id)
+                            return list(found_neighbors)
+                        continue 
+                    else:
+                        valid_tiles = [v for v in non_b_p if v != origin_id]
+                        if valid_tiles:
+                            found_neighbors.update(valid_tiles)
+                            return list(found_neighbors)
+                
+                elif "B" in unique_in_layer:
+                    passed_gap = True 
+                    consecutive_b_layers += 1
+                    if consecutive_b_layers >= 6:
+                        found_neighbors.add("B")
+                        return list(found_neighbors)
+                        
+                
+            return list(found_neighbors)
+        
 
         for name, x, y, w, h in placed_instances:
             inset_x = min(w // 3, EDGE_INSET)
@@ -430,7 +495,7 @@ class LevelReconstructor:
             else:
                 neighbors = get_smart_neighbors(
                     y - TOLERANCE, y, 
-                    x + inset_x, x + w - inset_x 
+                    x + inset_x, x + w - inset_x, "top", name 
                 )
                 target_dict[name]["top"].update(neighbors)
 
@@ -439,7 +504,7 @@ class LevelReconstructor:
             else:
                 neighbors = get_smart_neighbors(
                     y + h, y + h + TOLERANCE, 
-                    x + inset_x, x + w - inset_x
+                    x + inset_x, x + w - inset_x, "bottom", name
                 )
                 target_dict[name]["bottom"].update(neighbors)
 
@@ -448,7 +513,7 @@ class LevelReconstructor:
             else:
                 neighbors = get_smart_neighbors(
                     y + inset_y, y + h - inset_y,
-                    x - TOLERANCE, x
+                    x - TOLERANCE, x, "left", name
                 )
                 target_dict[name]["left"].update(neighbors)
 
@@ -457,7 +522,7 @@ class LevelReconstructor:
             else:
                 neighbors = get_smart_neighbors(
                     y + inset_y, y + h - inset_y,
-                    x + w, x + w + TOLERANCE
+                    x + w, x + w + TOLERANCE, "right", name
                 )
                 target_dict[name]["right"].update(neighbors)
 
@@ -636,7 +701,12 @@ class LevelReconstructor:
             self.template_cache = self._load_templates_for_level(level_stem)
             
             if not self.template_cache:
-                continue          
+                continue
+
+            valid_t = [t for t in self.template_cache.values() if t['is_valid']]
+            if valid_t:
+                self.cell_w = min(t['w'] for t in valid_t)
+                self.cell_h = min(t['h'] for t in valid_t)
 
             self.unmatched_templates = set(self.template_cache.keys())
             

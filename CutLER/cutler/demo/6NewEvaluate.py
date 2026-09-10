@@ -1,7 +1,12 @@
 """
-6evaluate.py
-============
-Evaluation harness for the WFC level generator.
+6NewEvaluate.py
+===============
+Evaluation harness for the WFC level generator, run over every level.
+
+Levels are discovered from LEVELS_DIR. For each one, the generation grid is
+taken from the source level image itself - width and height in pixels divided
+by CELL_SIZE, rounded up - so the generated levels are the same size as the
+original and the ratio counts are comparable.
 
 Occupancy rule: "B" is background, every other tile is an object. That is the
 only rule, it needs no labels, and it applies identically to both batches
@@ -10,20 +15,21 @@ only rule, it needs no labels, and it applies identically to both batches
 Requires, in the same folder:
     _55generate.py                    the solver
     metrics_topology.py               per-level structural metrics
-    complex_structure_emergence.py    macro emergence analysis
+    complex_structure.py              macro emergence analysis
 
-Writes into BASELINE_FOLDER:
-    new_evaluation_metrics_raw.csv    per-level metrics, both batches
-    new_comparison_summary.txt        Core vs Complex with bootstrap CIs
-    occupancy_<batch>.txt             ASCII map of the first level
-    complex_structure_emergence.csv   per-macro emergence detail
-    complex_structure_emergence.txt   emergence summary
-    macro_geometry_audit.csv          macro layout consistency audit
+Writes four files per level into OUTPUT_FOLDER:
+    <level>_new_evaluation_metrics_raw.csv    per-level metrics, both batches
+    <level>_new_comparison_summary.txt        Core vs Complex with bootstrap CIs
+    <level>_complex_structure_emergence.csv   per-macro emergence detail
+    <level>_complex_structure_emergence.txt   emergence summary
 """
 
 import os
 import re
+import glob
 import json
+import math
+import traceback
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -34,8 +40,8 @@ from scipy.stats import entropy, mannwhitneyu
 
 from _55generate import run_generation
 from metrics_topology import (
-    LevelConfig, structural_metrics, dump_occupancy_ascii,
-    pairwise_diversity, js_distance, parse_cell_name,
+    LevelConfig, structural_metrics, pairwise_diversity, js_distance,
+    parse_cell_name,
 )
 from complex_structure import (
     load_macro_templates, fold_grid, emergence_report, layout_diagnostics,
@@ -45,18 +51,23 @@ from complex_structure import (
 # ===========================================================================
 # CONFIG
 # ===========================================================================
-CORE_FOLDER = os.path.join("Generation", "0CoreDataset/mario-1-2_data")
-COMPLEX_FOLDER = os.path.join("Generation", "0ComplexDataset/mario-1-2_data")
-BASELINE_FOLDER = os.path.join("Generation", "Baselines/mario 1-2")
+LEVELS_DIR = os.path.join("demo", "imgs", "test")
+CORE_ROOT = os.path.join("Generation", "0CoreDataset")
+COMPLEX_ROOT = os.path.join("Generation", "0ComplexDataset")
+OUTPUT_FOLDER = os.path.join("Generation", "Baselines", "all_levels")
 
-GRID_WIDTH = 160
-GRID_HEIGHT = 13
+DATASET_SUFFIX = "_data"        # <level stem> + this = dataset folder name
+LEVEL_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
+CELL_SIZE = 16                  # px per tile; grid size = ceil(level px / this)
+
 NUM_LEVELS = 20
-
 NGRAM_K = 3                     # window size for the n-gram statistics
 EMERGENCE_K = (2, 3)            # sub-block sizes for partial emergence
 MACRO_LAYOUT = "blueprint"      # shape the walk reconstructs and the solver
                                 # stamps; "name" for raw source offsets
+
+ONLY_LEVELS = ()                # e.g. ("mario-1-1",) to restrict a run
+SKIP_EXISTING = False           # True to skip levels already written
 
 LEVEL_CFG = LevelConfig(
     jump_height=4,              # SMB: ~4 tiles of upward reach
@@ -70,11 +81,59 @@ CLONE_PATTERN = re.compile(r"(.+?)_((?:split_[LR]_)?tile_.+)_y\d+_x\d+")
 
 
 # ===========================================================================
+# Level discovery
+# ===========================================================================
+def discover_levels():
+    """
+    Every level image in LEVELS_DIR that has both a Core and a Complex dataset.
+
+    Returns a list of dicts with the level stem, its grid size derived from the
+    image, and the two dataset paths. Levels missing a dataset are reported and
+    skipped rather than failing the run.
+    """
+    found, skipped = [], []
+    paths = []
+    for ext in LEVEL_EXTS:
+        paths += glob.glob(os.path.join(LEVELS_DIR, f"*{ext}"))
+
+    for path in sorted(set(paths)):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if ONLY_LEVELS and stem not in ONLY_LEVELS:
+            continue
+        try:
+            with Image.open(path) as im:
+                px_w, px_h = im.size
+        except Exception as e:
+            skipped.append((stem, f"unreadable image: {e}"))
+            continue
+
+        core = os.path.join(CORE_ROOT, f"{stem}{DATASET_SUFFIX}")
+        comp = os.path.join(COMPLEX_ROOT, f"{stem}{DATASET_SUFFIX}")
+        missing = [n for n, d in (("core", core), ("complex", comp))
+                   if not os.path.isdir(d)]
+        if missing:
+            skipped.append((stem, f"no {'/'.join(missing)} dataset"))
+            continue
+
+        found.append({
+            "stem": stem,
+            "image": path,
+            "px": (px_w, px_h),
+            "width": math.ceil(px_w / CELL_SIZE),
+            "height": math.ceil(px_h / CELL_SIZE),
+            "core": core,
+            "complex": comp,
+        })
+
+    return found, skipped
+
+
+# ===========================================================================
 # Per-batch evaluation
 # ===========================================================================
-def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height,
-                   debug_dir=None):
-    print(f"\n--- Generating {batch_label} Batch ---")
+def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height):
+    print(f"\n--- Generating {batch_label} Batch "
+          f"({grid_width}x{grid_height}) ---")
 
     generated_data = run_generation(
         root_dir=dataset_dir,
@@ -105,7 +164,7 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
     raw_grids = []
 
     print(f"--- Evaluating {batch_label} Batch Matrices ---")
-    for idx, data in enumerate(generated_data):
+    for data in generated_data:
         grid = data["grid"]
         id_to_tile = data["id_to_tile"]
 
@@ -138,16 +197,12 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
         kl_div = entropy(actual_probs, target_probs)
 
         # ---- structural / topological metrics ------------------------------
-        topo, level_ngrams, debug = structural_metrics(
+        topo, level_ngrams, _debug = structural_metrics(
             grid, id_to_tile, LEVEL_CFG, ngram_size=NGRAM_K)
 
         batch_global_ngrams.update(level_ngrams)
         folded_grids.append(fold_grid(grid, id_to_tile))
         raw_grids.append((grid, id_to_tile))
-
-        if idx == 0 and debug_dir:
-            dump_occupancy_ascii(
-                debug, os.path.join(debug_dir, f"occupancy_{batch_label}.txt"))
 
         row_out = {
             "Batch": batch_label,
@@ -224,7 +279,7 @@ SECTIONS = (
 )
 
 
-def cross_batch_analysis(core_results, complex_results, baseline_dir,
+def cross_batch_analysis(level, core_results, complex_results, out_dir,
                          core_fails, complex_fails, core_ngrams, complex_ngrams,
                          num_levels, core_extras=None, complex_extras=None):
     print("\n--- Running Cross-Batch Analysis ---")
@@ -234,7 +289,9 @@ def cross_batch_analysis(core_results, complex_results, baseline_dir,
     core_extras = core_extras or {}
     complex_extras = complex_extras or {}
 
-    S = ["=== GENERATION EVALUATION SUMMARY ===",
+    S = [f"=== GENERATION EVALUATION SUMMARY: {level['stem']} ===",
+         f"grid {level['width']}x{level['height']} tiles, taken from the source "
+         f"level ({level['px'][0]}x{level['px'][1]} px / {CELL_SIZE}).",
          f"n={num_levels} requested per batch; "
          f"[lo, hi] = bootstrap 95% CI of the mean; "
          f"p from two-sided Mann-Whitney U.",
@@ -277,16 +334,16 @@ def cross_batch_analysis(core_results, complex_results, baseline_dir,
 
     text = "\n".join(S)
     print("\n" + text)
-    os.makedirs(baseline_dir, exist_ok=True)
-    with open(os.path.join(baseline_dir, "new_comparison_summary.txt"), "w") as f:
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{level['stem']}_new_comparison_summary.txt")
+    with open(path, "w") as f:
         f.write(text)
 
 
 # ===========================================================================
 # Macro emergence
 # ===========================================================================
-def run_emergence(complex_folder, core_grids, complex_grids, baseline_dir,
-                  complex_raw=None):
+def run_emergence(level, core_grids, complex_grids, out_dir, complex_raw=None):
     """
     How many of the complex macros does the Core generator build unaided?
 
@@ -296,6 +353,7 @@ def run_emergence(complex_folder, core_grids, complex_grids, baseline_dir,
     appeared in the output.
     """
     print("\n--- Complex Structure Emergence ---")
+    complex_folder = level["complex"]
     try:
         templates = load_macro_templates(complex_folder, layout=MACRO_LAYOUT)
     except (FileNotFoundError, ValueError) as e:
@@ -311,54 +369,95 @@ def run_emergence(complex_folder, core_grids, complex_grids, baseline_dir,
         diagnostics=layout_diagnostics(complex_folder),
         ratio_check=cross_check_ratios(complex_folder, templates),
         complex_raw=complex_raw,
-        out_dir=baseline_dir,
+        out_dir=out_dir,
+        out_prefix=f"{level['stem']}_",
+        write_audit=False,
     )
 
 
 # ===========================================================================
-def main():
-    os.makedirs(BASELINE_FOLDER, exist_ok=True)
+def evaluate_level(level, out_dir):
+    """Run both batches, the comparison and the emergence analysis for one level."""
+    print("\n" + "=" * 74)
+    print(f"LEVEL: {level['stem']}   "
+          f"source {level['px'][0]}x{level['px'][1]} px -> "
+          f"grid {level['width']}x{level['height']} tiles")
+    print("=" * 74)
 
     all_results = []
-    core_results, complex_results = [], []
-    core_fails = complex_fails = 0
-    core_ngrams, complex_ngrams = Counter(), Counter()
-    core_extras, complex_extras = {}, {}
 
-    if os.path.exists(CORE_FOLDER):
-        core_results, core_fails, core_ngrams, core_extras = evaluate_batch(
-            CORE_FOLDER, "Core", NUM_LEVELS, GRID_WIDTH, GRID_HEIGHT,
-            BASELINE_FOLDER)
-        all_results.extend(core_results)
-    else:
-        print(f"Warning: Core directory {CORE_FOLDER} not found.")
+    core_results, core_fails, core_ngrams, core_extras = evaluate_batch(
+        level["core"], "Core", NUM_LEVELS, level["width"], level["height"])
+    all_results.extend(core_results)
 
-    if os.path.exists(COMPLEX_FOLDER):
-        complex_results, complex_fails, complex_ngrams, complex_extras = evaluate_batch(
-            COMPLEX_FOLDER, "Complex", NUM_LEVELS, GRID_WIDTH, GRID_HEIGHT,
-            BASELINE_FOLDER)
-        all_results.extend(complex_results)
-    else:
-        print(f"Warning: Complex directory {COMPLEX_FOLDER} not found.")
+    complex_results, complex_fails, complex_ngrams, complex_extras = evaluate_batch(
+        level["complex"], "Complex", NUM_LEVELS, level["width"], level["height"])
+    all_results.extend(complex_results)
 
     if core_results and complex_results:
         cross_batch_analysis(
-            core_results, complex_results, BASELINE_FOLDER,
+            level, core_results, complex_results, out_dir,
             core_fails, complex_fails, core_ngrams, complex_ngrams,
             NUM_LEVELS, core_extras, complex_extras)
 
-    if core_extras.get("folded_grids") and os.path.exists(COMPLEX_FOLDER):
-        run_emergence(COMPLEX_FOLDER,
+    if core_extras.get("folded_grids"):
+        run_emergence(level,
                       core_extras["folded_grids"],
                       complex_extras.get("folded_grids"),
-                      BASELINE_FOLDER,
+                      out_dir,
                       complex_raw=complex_extras.get("raw_grids"))
 
     if all_results:
         df = pd.DataFrame(all_results).drop(columns=["Path"])
-        out = os.path.join(BASELINE_FOLDER, "new_evaluation_metrics_raw.csv")
+        out = os.path.join(out_dir,
+                           f"{level['stem']}_new_evaluation_metrics_raw.csv")
         df.to_csv(out, index=False)
         print(f"\nRaw metrics exported to {out}")
+
+    return {"level": level["stem"],
+            "core_ok": len(core_results), "core_failed": core_fails,
+            "complex_ok": len(complex_results), "complex_failed": complex_fails}
+
+
+def main():
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    levels, skipped = discover_levels()
+
+    print(f"Found {len(levels)} level(s) with both datasets in {LEVELS_DIR}")
+    for lv in levels:
+        print(f"   {lv['stem']:<44} {lv['width']}x{lv['height']} tiles")
+    for stem, why in skipped:
+        print(f"   SKIP {stem:<39} {why}")
+    if not levels:
+        print("Nothing to do.")
+        return
+
+    done, failed = [], []
+    for i, level in enumerate(levels, 1):
+        target = os.path.join(
+            OUTPUT_FOLDER, f"{level['stem']}_new_evaluation_metrics_raw.csv")
+        if SKIP_EXISTING and os.path.exists(target):
+            print(f"\n[{i}/{len(levels)}] {level['stem']}: already done, skipping")
+            continue
+        print(f"\n[{i}/{len(levels)}] {level['stem']}")
+        try:
+            done.append(evaluate_level(level, OUTPUT_FOLDER))
+        except Exception:
+            # one bad level must not lose the whole run
+            print(f"!! {level['stem']} failed:\n{traceback.format_exc()}")
+            failed.append(level["stem"])
+
+    print("\n" + "=" * 74)
+    print("RUN COMPLETE")
+    print("=" * 74)
+    print(f"{'level':<44}{'core':>10}{'complex':>10}")
+    for d in done:
+        core_txt = "{}/{}".format(d["core_ok"], NUM_LEVELS)
+        comp_txt = "{}/{}".format(d["complex_ok"], NUM_LEVELS)
+        print(f"{d['level']:<44}{core_txt:>10}{comp_txt:>10}")
+    if failed:
+        print(f"\nfailed levels: {failed}")
+    print(f"\nAll output in {OUTPUT_FOLDER}")
 
 
 if __name__ == "__main__":

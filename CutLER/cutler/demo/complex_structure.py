@@ -585,7 +585,8 @@ SIZE_BUCKETS = ((2, "1-2"), (4, "3-4"), (9, "5-9"), (16, "10-16"), (10 ** 9, "17
 
 def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
                      out_dir=None, diagnostics=None, ratio_check=None,
-                     complex_raw=None, verbose=True):
+                     complex_raw=None, out_prefix="", write_audit=False,
+                     verbose=True):
     """Full analysis. Returns a dict; optionally writes a CSV and summary."""
     if not templates:
         raise ValueError("no macro templates - check the clone naming "
@@ -848,18 +849,18 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
         import csv
-        with open(os.path.join(out_dir, "complex_structure_emergence.csv"),
-                  "w", newline="") as f:
+        base = f"{out_prefix}complex_structure_emergence"
+        with open(os.path.join(out_dir, f"{base}.csv"), "w", newline="") as f:
             wtr = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
             wtr.writeheader()
             wtr.writerows(rows)
-        if diagnostics:
-            with open(os.path.join(out_dir, "macro_geometry_audit.csv"),
+        if diagnostics and write_audit:
+            with open(os.path.join(out_dir, f"{out_prefix}macro_geometry_audit.csv"),
                       "w", newline="") as f:
                 wtr = csv.DictWriter(f, fieldnames=list(diagnostics[0].keys()))
                 wtr.writeheader()
                 wtr.writerows(diagnostics)
-        with open(os.path.join(out_dir, "complex_structure_emergence.txt"), "w") as f:
+        with open(os.path.join(out_dir, f"{base}.txt"), "w") as f:
             f.write(text)
 
     return {"rows": rows, "summary": text, "novel": novel,
