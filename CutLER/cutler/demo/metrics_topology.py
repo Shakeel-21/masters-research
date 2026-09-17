@@ -68,6 +68,8 @@ def parse_cell_name(raw_name: str):
     """
     m = CLONE_RE.match(raw_name)
     if m:
+        if m.group(2) == "tile_VOID":
+            return BACKGROUND, 0, 0, False
         return f"{m.group(2)}.png", int(m.group(3)), int(m.group(4)), True
     if raw_name in (BACKGROUND, PADDING, UNCOLLAPSED):
         return raw_name, 0, 0, False

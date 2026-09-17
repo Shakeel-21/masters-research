@@ -53,8 +53,8 @@ from complex_structure import (
 # ===========================================================================
 LEVELS_DIR = os.path.join("demo", "imgs", "test")
 CORE_ROOT = os.path.join("Generation", "0CoreDataset")
-COMPLEX_ROOT = os.path.join("Generation", "0ComplexDataset")
-OUTPUT_FOLDER = os.path.join("Generation", "Baselines", "all_levels")
+COMPLEX_ROOT = os.path.join("Generation", "0NewComplexDataset")
+OUTPUT_FOLDER = os.path.join("Generation", "NewBaselines", "all_levels")
 
 DATASET_SUFFIX = "_data"        # <level stem> + this = dataset folder name
 LEVEL_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
@@ -140,7 +140,7 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
         grid_width=grid_width,
         grid_height=grid_height,
         num_levels=num_levels,
-        filename="newMetrics.png",
+        filename="diffAdj.png",
     )
 
     failed_generations = num_levels - len(generated_data)

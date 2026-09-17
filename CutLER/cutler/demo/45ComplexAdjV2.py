@@ -6,14 +6,14 @@ import sys
 import json
 import shutil
 import re
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, deque
 
 class LevelReconstructor:
     """
     Reconstructs level images using ONLY segments found in a folder matching the level's name.
     Supports Complex Tiles via a Two-Stage Masked Solver with a Ghost Pass.
     """
-    
+    VOID_CORE = "tile_VOID"
     def __init__(self, segment_path, level_path, output_path, match_threshold=0.08, use_complex_tiles=False):
         self.segments_base_path = Path(segment_path)
         self.level_path = Path(level_path)
@@ -21,6 +21,7 @@ class LevelReconstructor:
         self.MATCH_THRESHOLD = match_threshold
         self.USE_COMPLEX_TILES = use_complex_tiles
 
+        self.voids_minted = 0
         self.template_cache = {} 
         self.source_image_cache = {}
         self.unmatched_templates = set()
@@ -96,6 +97,157 @@ class LevelReconstructor:
             }
         return templates
 
+    def _fill_macro_voids(self, comp_key, gx, gy, comp_w, comp_h, claimed_cells,
+                          id_grid, visited_mask, void_mask, placed_instances,
+                          is_occupied_source, h, w):
+        
+        """
+        Mint void pieces only where they BRIDGE otherwise disconnected parts of
+        a macro.
+
+        The blueprint walk in the generator only traverses pieces, so a macro
+        whose cores are separated by empty cells splits into components that get
+        anchored by filename instead of by learned rules. A void is a piece id
+        with no backing image, so a chain of them across the gap lets the walk
+        through and the geometry comes from the ruleset again.
+
+        Only the connecting cells are minted. Sky that is merely enclosed by the
+        macro needs no id - the generator can stamp those cells as plain
+        background - and naming every one of them would multiply the vocabulary
+        for nothing.
+
+        Voids are written to `void_mask`, never to `visited_mask`. `visited_mask`
+        arbitrates which complex template wins a region, and letting voids claim
+        territory there starves every template processed after this one.
+        """
+        if self.cell_h <= 0 or self.cell_w <= 0 or not claimed_cells:
+            return 0
+
+        rows = max(1, int(round(comp_h / self.cell_h)))
+        cols = max(1, int(round(comp_w / self.cell_w)))
+        rows = max(rows, max(cy for cy, _ in claimed_cells) + 1)
+        cols = max(cols, max(cx for _, cx in claimed_cells) + 1)
+
+        def cell_box(cy, cx):
+            y0 = gy + cy * self.cell_h
+            x0 = gx + cx * self.cell_w
+            return y0, x0, y0 + self.cell_h, x0 + self.cell_w
+
+        # Which empty cells could legally carry a void?
+        minteable = set()
+        for cy in range(rows):
+            for cx in range(cols):
+                if (cy, cx) in claimed_cells:
+                    continue
+                y0, x0, y1, x1 = cell_box(cy, cx)
+                if y0 < 0 or x0 < 0 or y1 > h or x1 > w:
+                    continue
+                # Occupied in the source means a segmentor miss, not a gap.
+                if is_occupied_source[y0:y1, x0:x1].mean() > 0.05:
+                    continue
+                if visited_mask[y0:y1, x0:x1].mean() > 0.10:
+                    continue
+                if void_mask[y0:y1, x0:x1].any():
+                    continue
+                minteable.add((cy, cx))
+
+        NEIGHBOURS = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
+        # Connected components of the real pieces.
+        comps, seen = [], set()
+        for cell in sorted(claimed_cells):
+            if cell in seen:
+                continue
+            grp, q = {cell}, deque([cell])
+            seen.add(cell)
+            while q:
+                cy, cx = q.popleft()
+                for dy, dx in NEIGHBOURS:
+                    n = (cy + dy, cx + dx)
+                    if n in claimed_cells and n not in seen:
+                        seen.add(n)
+                        grp.add(n)
+                        q.append(n)
+            comps.append(grp)
+
+        if len(comps) <= 1:
+            return 0
+
+        comps.sort(key=lambda g: (-len(g), min(g)))
+        connected, pending = set(comps[0]), comps[1:]
+        minted_cells = set()
+
+        while pending:
+            # 0-1 BFS out of the connected set: crossing an existing piece is
+            # free, crossing an empty cell costs one void. The first component
+            # reached is therefore joined by the fewest possible voids.
+            dist, prev, done = {}, {}, set()
+            dq = deque()
+            for c in connected:
+                dist[c] = 0
+                dq.append(c)
+
+            target = target_grp = None
+            while dq:
+                cur = dq.popleft()
+                if cur in done:
+                    continue
+                done.add(cur)
+
+                hit = next((g for g in pending if cur in g), None)
+                if hit is not None:
+                    target, target_grp = cur, hit
+                    break
+
+                d = dist[cur]
+                for dy, dx in NEIGHBOURS:
+                    n = (cur[0] + dy, cur[1] + dx)
+                    if not (0 <= n[0] < rows and 0 <= n[1] < cols):
+                        continue
+                    if n in claimed_cells:
+                        step = 0
+                    elif n in minteable or n in minted_cells:
+                        step = 1
+                    else:
+                        continue
+                    nd = d + step
+                    if nd < dist.get(n, float("inf")):
+                        dist[n] = nd
+                        prev[n] = cur
+                        if step == 0:
+                            dq.appendleft(n)
+                        else:
+                            dq.append(n)
+
+            if target is None:
+                # Nothing left is reachable through minteable cells. Better to
+                # leave the remainder fragmented than to invent a bridge.
+                break
+
+            node = target
+            while node in prev:
+                if node not in claimed_cells:
+                    minted_cells.add(node)
+                node = prev[node]
+
+            connected |= target_grp | minted_cells
+            pending = [g for g in pending if g is not target_grp]
+
+        minted = 0
+        for cy, cx in sorted(minted_cells):
+            y0, x0, y1, x1 = cell_box(cy, cx)
+            void_id = f"{comp_key[:-4]}_{self.VOID_CORE}_y{cy}_x{cx}"
+            if void_id not in self.dynamic_templates:
+                self.dynamic_templates[void_id] = np.zeros(
+                    (self.cell_h, self.cell_w, 4), dtype=np.uint8)
+
+            id_grid[y0:y1, x0:x1] = void_id
+            void_mask[y0:y1, x0:x1] = True
+            placed_instances.append((void_id, x0, y0, self.cell_w, self.cell_h))
+            minted += 1
+
+        return minted
+
     def _reconstruct_single_level_complex(self, level_name, level_img_original, level_stem):
         print(f"\n  -> Running Spatial Geometric Solver (Global NMS & Mask) for {level_name}")
         h, w, _ = level_img_original.shape
@@ -103,7 +255,7 @@ class LevelReconstructor:
         id_grid_A = np.full((h, w), "B", dtype=object)
         visited_mask_A = np.zeros((h, w), dtype=bool)
         placed_instances_A = []
-        
+        void_mask_A = np.zeros((h, w), dtype=bool)
         id_grid_B = np.full((h, w), "B", dtype=object)
         visited_mask_B = np.zeros((h, w), dtype=bool)
         placed_instances_B = []
@@ -249,7 +401,11 @@ class LevelReconstructor:
                         self.used_templates.add(core_data['filepath'])
                         self.used_templates.add(comp_data['filepath'])
 
-                    if placed_any:              
+                    if placed_any:
+                        self.voids_minted += self._fill_macro_voids(
+                            comp_key, gx, gy, comp_w, comp_h, claimed_cells,
+                            id_grid_A, visited_mask_A, void_mask_A,
+                            placed_instances_A, is_occupied_source, h, w)
                         break
             except cv2.error:
                 continue
@@ -316,7 +472,8 @@ class LevelReconstructor:
                     overlap_A = np.sum(target_A[c_shrunk])
 
                     if (overlap_A / total_pixels) < 0.30:
-                        free_A = c_alpha & ~target_A
+                        void_A = void_mask_A[y:y+ch, x:x+cw]
+                        free_A = c_alpha & ~target_A & ~void_A
                         if np.any(free_A):
                             id_grid_A[y:y+ch, x:x+cw][free_A] = core_key
                             visited_mask_A[y:y+ch, x:x+cw][free_A] = True
@@ -349,6 +506,15 @@ class LevelReconstructor:
         # ---------------------------------------------------------
         ghost_rules = defaultdict(lambda: {"top": Counter(), "bottom": Counter(), "left": Counter(), "right": Counter()})
         self._extract_neighbors_from_grid(placed_instances_B, id_grid_B, h, w, target_dict=ghost_rules)
+        inverse_dir = {"top": "bottom", "bottom": "top", "left": "right", "right": "left"}
+        ghost_b_rules = defaultdict(Counter)
+        for g_core, g_rules in ghost_rules.items():
+            for d, neighbors in g_rules.items():
+                b_count = neighbors.get("B", 0)
+                if b_count:
+                    ghost_b_rules[inverse_dir[d]][g_core] += b_count
+        for d in ["top", "bottom", "left", "right"]:
+            ghost_b_rules[d]["B"] += 1
 
         # ---------------------------------------------------------
         # PHASE 3: THE ADAPTER MERGE
@@ -362,7 +528,33 @@ class LevelReconstructor:
             match = clone_pattern.match(clone_id)
             if match:
                 base_name = match.group(1)       
-                core_key_base = match.group(2)   
+                core_key_base = match.group(2) 
+                if core_key_base == self.VOID_CORE:
+                    # Same contract as a real clone: edges facing only siblings
+                    # stay locked to the macro, exposed edges inherit the core
+                    # ruleset so the macro can seat against the wider level.
+                    # A void's core is the background, so it inherits ghost_b.
+                    #
+                    # No merge into a generic "tile_VOID.png" - that would be an
+                    # image-less tile the solver could drop anywhere.
+                    for d in ["top", "bottom", "left", "right"]:
+                        neighbors = list(rules[d].items())
+
+                        is_strictly_internal = False
+                        if len(neighbors) > 0:
+                            is_strictly_internal = True
+                            for n_id, _ in neighbors:
+                                n_match = clone_pattern.match(n_id)
+                                if not (n_match and n_match.group(1) == base_name):
+                                    is_strictly_internal = False
+                                    break
+
+                        if not is_strictly_internal:
+                            # "B" is kept here, unlike the core branch below.
+                            # A void beside open sky is the ordinary case.
+                            for gn, gcount in ghost_b_rules[d].items():
+                                real_rules[clone_id][d][gn] += gcount
+                    continue  
                 core_key = f"{core_key_base}.png" 
 
                 if core_key in ghost_rules:
@@ -388,6 +580,8 @@ class LevelReconstructor:
                     for n_id, n_count in neighbors:
                         n_match = clone_pattern.match(n_id)
                         if n_match and n_match.group(1) == base_name:
+                            if n_match.group(2) == self.VOID_CORE:
+                                continue
                             n_core_key = f"{n_match.group(2)}.png"
                             real_rules[core_key][d][n_core_key] += n_count
 
@@ -638,8 +832,39 @@ class LevelReconstructor:
         output_file_path = out_dir / f"{level_stem}_reconstructed_pruned.png"
         cv2.imwrite(str(output_file_path), blank_grid)
 
+    def _patch_void_boundaries(self):
+        """
+        Last-resort safety net for void pieces with an empty direction.
+
+        The adapter merge already gives every exposed void edge the background
+        ghost ruleset, so this should normally patch nothing. It only fires if
+        the ghost pass itself produced no background rules for that direction,
+        which would otherwise let the pruning pass delete the void and
+        re-fragment the macro it was minted to hold together.
+        """
+        void_marker = f"_{self.VOID_CORE}_y"
+        patched = 0
+        suspect = set()
+
+        for tile_id, rules in self.adjacency_rules.items():
+            if void_marker not in tile_id:
+                continue
+            for d in ["top", "bottom", "left", "right"]:
+                if len(rules[d]) == 0:
+                    rules[d]["B"] += 1
+                    patched += 1
+                    suspect.add(tile_id)
+
+        if patched:
+            print(f"  -> Fallback: patched {patched} void boundaries the ghost "
+                f"pass left empty, across {len(suspect)} piece(s). The ghost "
+                f"pass found no background rules for those directions.")
+        return patched
+
+    
 
     def _enforce_rule_symmetry(self):
+        self._patch_void_boundaries()
         print("  -> Enforcing perfect mathematical symmetry on adjacency rules...")
         
         all_tiles = list(self.adjacency_rules.keys())
@@ -717,6 +942,7 @@ class LevelReconstructor:
             self.dynamic_templates = {}
             self.cell_w = 0
             self.cell_h = 0
+            self.voids_minted = 0
 
             self.template_cache = self._load_templates_for_level(level_stem)
             
@@ -734,6 +960,9 @@ class LevelReconstructor:
             
             level_output_dir = out_base / f"{level_stem}_data"
             level_output_dir.mkdir(parents=True, exist_ok=True)
+
+            print(f"  -> Minted {self.voids_minted} macro-local void pieces "
+                  f"for {level_stem}")
 
             self._enforce_rule_symmetry()
             self._save_pruned_reconstruction(level_img_bgra, level_stem, out_base)   
@@ -754,5 +983,5 @@ if __name__ == "__main__":
     )
 
     reconstructor.run_reconstruction(
-        base_output_dir="Generation/0ComplexDataset"
+        base_output_dir="Generation/0NewComplexDataset"
     )
