@@ -54,20 +54,20 @@ from complex_structure import (
 LEVELS_DIR = os.path.join("demo", "imgs", "test")
 CORE_ROOT = os.path.join("Generation", "0CoreDataset")
 COMPLEX_ROOT = os.path.join("Generation", "0NewComplexDataset")
-OUTPUT_FOLDER = os.path.join("Generation", "NewBaselines", "all_levels")
+OUTPUT_FOLDER = os.path.join("Generation", "NewCountBaselines", "all_levels")
 
 DATASET_SUFFIX = "_data"        # <level stem> + this = dataset folder name
 LEVEL_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
 CELL_SIZE = 16                  # px per tile; grid size = ceil(level px / this)
 
-NUM_LEVELS = 20
+NUM_LEVELS = 2
 NGRAM_K = 3                     # window size for the n-gram statistics
 EMERGENCE_K = (2, 3)            # sub-block sizes for partial emergence
 MACRO_LAYOUT = "blueprint"      # shape the walk reconstructs and the solver
                                 # stamps; "name" for raw source offsets
 
 ONLY_LEVELS = ()                # e.g. ("mario-1-1",) to restrict a run
-SKIP_EXISTING = False           # True to skip levels already written
+SKIP_EXISTING = True           # True to skip levels already written
 
 LEVEL_CFG = LevelConfig(
     jump_height=4,              # SMB: ~4 tiles of upward reach
@@ -140,7 +140,7 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
         grid_width=grid_width,
         grid_height=grid_height,
         num_levels=num_levels,
-        filename="diffAdj.png",
+        filename="NewCountsApplied.png",
     )
 
     failed_generations = num_levels - len(generated_data)

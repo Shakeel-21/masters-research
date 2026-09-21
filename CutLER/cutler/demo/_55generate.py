@@ -14,6 +14,8 @@ import heapq
 
 DEBUG = False
 
+POOL_CLONE_RE = re.compile(r"(.+?)_((?:split_[LR]_)?tile_.+)_y\d+_x\d+$")
+
 def merge_wfc_levels(level_paths, output_dir):
     print(f"Merging {len(level_paths)} level datasets into {output_dir}...")
     os.makedirs(output_dir, exist_ok=True)
@@ -136,7 +138,24 @@ def load_data(rules_file, ratios_file, tiles_dir):
     int_ratios = {tile_to_id[k]: v for k, v in ratios.items() if k in tile_to_id}
     int_tile_sizes = {tile_to_id[k]: v for k, v in tile_sizes.items() if k in tile_to_id}
 
-    return int_adjacencies, int_ratios, images, int_tile_sizes, CELL_SIZE, tile_to_id, id_to_tile
+    clone_ids, pool_of = set(), {}
+    pooled_weight = dict(int_ratios)
+    for name, t_id in tile_to_id.items():
+        m = POOL_CLONE_RE.match(name)
+        if not m:
+            continue
+        clone_ids.add(t_id)
+        base_id = tile_to_id.get(f"{m.group(2)}.png")
+        if base_id is None or base_id == t_id:
+            continue                      # voids have no core tile; skip pooling
+        pool_of[t_id] = base_id
+        pooled_weight[base_id] = pooled_weight.get(base_id, 0.0) + int_ratios.get(t_id, 0.0)
+
+    print(f"  -> {len(clone_ids)} macro clones; {len(pool_of)} pooled into "
+          f"{len(set(pool_of.values()))} core tiles")
+
+    return (int_adjacencies, int_ratios, images, int_tile_sizes, CELL_SIZE,
+            tile_to_id, id_to_tile, clone_ids, pool_of, pooled_weight)
 
 
 DIR_MAP = {0: "top", 1: "bottom", 2: "left", 3: "right"}
@@ -154,10 +173,17 @@ def inject_background_rules(adjacencies, ratios):
 
     inverse_dir = {"top": "bottom", "bottom": "top", "left": "right", "right": "left"}
     
-    sky_to_sky_weight = float(ratios.get("B", 100.0))
+    BG_SELF_BIAS = 14.3
+    _mirror = {}
+    for _d, _inv in (("top", "bottom"), ("bottom", "top"),
+                     ("left", "right"), ("right", "left")):
+        _mirror[_d] = sum(w for t, rules in adjacencies.items()
+                          if t not in ("B", "P")
+                          for n, w in rules.get(_inv, []) if n == "B")
     pad_weight = 1.0
 
     for d in ["top", "bottom", "left", "right"]:
+        sky_to_sky_weight = BG_SELF_BIAS * _mirror[d]
         if ["B", sky_to_sky_weight] not in adjacencies["B"][d]:
              adjacencies["B"][d].append(["B", sky_to_sky_weight])
              
@@ -335,23 +361,22 @@ def initial_grid_prune(grid, tile_meta, blueprints, adjacencies, pad_id):
     return grid
 
 
-def get_min_entropy_cell(grid, heap):
+def get_min_entropy_cell(grid, heap, cache):
     while heap:
         entropy, _, y, x = heapq.heappop(heap)
-        
+
         cell = grid[y][x]
         if not isinstance(cell, set):
-            continue 
-            
-        actual_entropy = len(cell)
-        
-        if actual_entropy == 0:
-            return (-1, -1) 
-            
-        if actual_entropy == entropy:
+            continue
+
+        if not cell:
+            return (-1, -1)
+
+        # float keys, so the staleness test needs a tolerance not ==
+        if abs(cache.entropy(cell) - entropy) < 1e-9:
             return (y, x)
-            
-    return None 
+
+    return None
 
 def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, steps, state, pad_id, blueprints, tile_meta, b_id):
     possible_tiles = list(grid[y][x])    
@@ -364,6 +389,7 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
     total_ratio_sum = state['ratio_sum']
 
     progress_ratio = state['cells_done'] / total_playable_cells if total_playable_cells > 0 else 0.0
+    
 
     if history is not None:
         for t in ratios.keys():
@@ -403,7 +429,7 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
                 if not (1 <= gy < len(grid) - 1 and 1 <= gx < len(grid[0]) - 1):
                     is_valid_blueprint = False
                     break
-                    
+                
                 cell_state = grid[gy][gx]
                 if isinstance(cell_state, set):
                     if piece['id'] not in cell_state:
@@ -433,7 +459,10 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
                         is_illegal = True
                         break
 
-                    total_allowed_weight = cache.dir_total[d_key].get(tile, 0.0)
+                    if neighbor_val in state['clone_ids']:
+                        total_allowed_weight = cache.dir_total[d_key].get(tile, 0.0)
+                    else:
+                        total_allowed_weight = cache.dir_total_core[d_key].get(tile, 0.0)
                     prob = n_weight / total_allowed_weight if total_allowed_weight > 0 else 0
                     directional_probs.append(prob)
 
@@ -443,7 +472,9 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
         legal_indices.append(i)
 
         base_weight = ratios.get(tile, 1.0)
-        base_ratio_weight = base_weight / total_ratio_sum
+        select_weight = (base_weight if tile in state['clone_ids']
+                         else state['pooled_weight'].get(tile, base_weight))
+        base_ratio_weight = select_weight / total_ratio_sum
         local_w = base_ratio_weight
         for p in directional_probs:
             local_w *= p
@@ -465,8 +496,16 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
         pacing_multiplier = 1.0
         
         if not is_structural and tile in ratios and tile != b_id:
-            desired_total_count = (base_weight / total_ratio_sum) * total_playable_cells
-            actual_count = state['current'].get(tile, 0)
+            if tile in state['clone_ids']:
+                # Clones keep their own quota, so macro frequency is unchanged.
+                desired_total_count = (base_weight / total_ratio_sum) * total_playable_cells
+                actual_count = state['current'].get(tile, 0)
+            else:
+                # Core tiles spend a budget covering their macro copies too, and
+                # every macro cell already laid down counts against it.
+                quota_weight = state['pooled_weight'].get(tile, base_weight)
+                desired_total_count = (quota_weight / total_ratio_sum) * total_playable_cells
+                actual_count = (state['current'].get(tile, 0) + state['clone_use'].get(tile, 0) * progress_ratio)
             
             if actual_count >= desired_total_count:
                 pacing_multiplier = 0.0
@@ -475,7 +514,10 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
                 deficit = ideal_current_count - actual_count
                 
                 if deficit < 0:
-                    pacing_multiplier = math.exp(deficit * 5) 
+                    # relative overshoot, so a tile with a large quota can cluster
+                    # locally without being banned for hundreds of collapses
+                    rel = deficit / desired_total_count if desired_total_count > 0 else deficit
+                    pacing_multiplier = math.exp(rel * 25)
                 else:
                     percent_behind = deficit / desired_total_count if desired_total_count > 0 else 0
                     pacing_multiplier = 1.0 + min(0.25, percent_behind * 0.4)
@@ -523,6 +565,10 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
                 if piece['id'] in state['current']:
                     state['current'][piece['id']] += 1
                     state['collapsed_count'] += 1
+
+                _base = state['pool_of'].get(piece['id'])
+                if _base is not None:
+                    state['clone_use'][_base] = state['clone_use'].get(_base, 0) + 1
                     
                 if global_y == 1 and piece['id'] in state['roof']:
                     state['roof'][piece['id']] += 1
@@ -530,6 +576,8 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
                     state['floor'][piece['id']] += 1
     else:
         if isinstance(grid[y][x], set):
+            if chosen_tile in state['clone_ids']:
+                print("clone placed outside a stamp:", id_to_tile.get(chosen_tile))
             grid[y][x] = chosen_tile
             collapsed_coords.append((y, x))
             state['cells_done'] += 1 
@@ -537,6 +585,10 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
             if chosen_tile in state['current']:
                 state['current'][chosen_tile] += 1
                 state['collapsed_count'] += 1
+
+            _base = state['pool_of'].get(chosen_tile)
+            if _base is not None:
+                state['clone_use'][_base] = state['clone_use'].get(_base, 0) + 1
                 
             if y == 1 and chosen_tile in state['roof']:
                 state['roof'][chosen_tile] += 1
@@ -546,17 +598,53 @@ def collapse_cell(grid, y, x, adjacencies, cache, tile_sizes, ratios, history, s
     return collapsed_coords
 
 class AdjCache:
-    __slots__ = ("allowed", "dir_total", "_c", "hits", "misses", "cap")
+    __slots__ = ("allowed", "dir_total", "_c", "_e", "_w", "_wlogw",
+                 "hits", "misses", "e_hits", "e_misses", "cap", "dir_total_core")
 
-    def __init__(self, adjacencies, cap=200000):
+    def __init__(self, adjacencies, ratios=None, cap=200000, clone_ids=frozenset()):
         self.allowed, self.dir_total = {}, {}
+        self.dir_total_core = {}
+        for d in ("top", "bottom", "left", "right"):
+            self.dir_total_core[d] = {
+                t: (sum(w for n, w in dirs.get(d, {}).items()
+                        if n not in clone_ids) or 0.0)
+                for t, dirs in adjacencies.items()}
+            
         for d in ("top", "bottom", "left", "right"):
             self.allowed[d] = {t: frozenset(dirs.get(d, {})) for t, dirs in adjacencies.items()}
             self.dir_total[d] = {t: (sum(dirs.get(d, {}).values()) or 0.0)
                                  for t, dirs in adjacencies.items()}
         self._c = {d: {} for d in ("top", "bottom", "left", "right")}
-        self.hits = self.misses = 0
+        self._w = ratios or {}
+        self._wlogw = {t: (v * math.log(v) if v > 0 else 0.0) for t, v in self._w.items()}
+        self._e = {}
+        self.hits = self.misses = self.e_hits = self.e_misses = 0
         self.cap = cap
+
+    def entropy(self, domain):
+        """Weighted Shannon entropy. Domain size counts a 0.66-weight clone
+        the same as 1722-weight background, which flattens the entropy
+        landscape once the vocabulary carries macro pieces and stops the
+        solver following existing structure."""
+        n = len(domain)
+        if n <= 1:
+            return 0.0
+        key = frozenset(domain)
+        got = self._e.get(key)
+        if got is not None:
+            self.e_hits += 1
+            return got
+        self.e_misses += 1
+        W = S = 0.0
+        for t in domain:
+            v = self._w.get(t, 0.0)
+            if v > 0.0:
+                W += v
+                S += self._wlogw[t]
+        h = 0.0 if W <= 0.0 else math.log(W) - S / W
+        if len(self._e) < self.cap:
+            self._e[key] = h
+        return h
 
     def union(self, dir_key, domain):
         c = self._c[dir_key]
@@ -632,7 +720,7 @@ def update_cell(grid, target_y, target_x, source_y, source_x, direction, adjacen
 
     new_len = len(target)
     if new_len < original_len:
-        heapq.heappush(heap, (new_len, tiebreak[target_y][target_x], target_y, target_x))
+        heapq.heappush(heap, (cache.entropy(target), tiebreak[target_y][target_x], target_y, target_x))
         return True
     return False
 
@@ -668,7 +756,7 @@ class MaxRetriesException(Exception):
 def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_id, playable_tiles, b_id, frames=False): 
     global_start_time = time.time()
     blueprints, tile_meta = analyze_complex_tiles(playable_tiles, id_to_tile, adjacencies)
-    cache = AdjCache(adjacencies)
+    cache = AdjCache(adjacencies, ratios, clone_ids=clone_ids)
     ratio_sum = sum(ratios.values()) or 1
     
     def check_timeout(current_grid):
@@ -696,7 +784,11 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
                 'floor': {t: 0 for t in ratios.keys()},
                 'collapsed_count': 0,
                 'cells_done': 0,
-                'ratio_sum': ratio_sum
+                'ratio_sum': ratio_sum,
+                'clone_use': {},
+                'clone_ids': clone_ids,
+                'pool_of': pool_of,
+                'pooled_weight': pooled_weight
             }
             playable_height = len(grid) - 2 
             playable_width = len(grid[0]) - 2 
@@ -708,7 +800,7 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
             for y in range(1, playable_height + 1):
                 for x in range(1, playable_width + 1):
                     if isinstance(grid[y][x], set):
-                        heapq.heappush(heap, (len(grid[y][x]), random.random(), y, x))
+                        heapq.heappush(heap, (cache.entropy(grid[y][x]), random.random(), y, x))
             
             h_len = len(grid)
             w_len = len(grid[0])
@@ -720,7 +812,7 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
 
             while True:
                 check_timeout(grid)
-                cell = get_min_entropy_cell(grid, heap)
+                cell = get_min_entropy_cell(grid, heap, cache)
 
                 if cell == (-1, -1):
                     raise RetryException(grid)
@@ -743,7 +835,12 @@ def generate_level(height, width, adjacencies, ratios, tile_sizes, timeout, pad_
                 else:
                     print(f"Dead end at {y},{x}. Restarting...")
                     raise RetryException(grid)
-            
+            singles = Counter()
+            for row in grid:
+                for c in row:
+                    if not isinstance(c, set) and c in clone_ids:
+                        singles[c] += 1
+            print("clone cells written singly:", sum(singles.values()))
             return grid, generation_history, collapse_steps, frame_states
 
     attempts = 0
@@ -906,8 +1003,8 @@ def run_generation(root_dir, grid_width, grid_height, num_levels, timeout=2000, 
         name, extension = os.path.splitext(out_filename)
         
         # Load data ONLY ONCE per folder to save IO time
-        global id_to_tile
-        adj, ratios, imgs, sizes, c_size, tile_to_id, id_to_tile = load_data(RULES_FILE, RATIOS_FILE, TILES_DIR) 
+        global id_to_tile, clone_ids, pool_of, pooled_weight
+        adj, ratios, imgs, sizes, c_size, tile_to_id, id_to_tile, clone_ids, pool_of, pooled_weight = load_data(RULES_FILE, RATIOS_FILE, TILES_DIR) 
         
         b_id = tile_to_id.get("B")
         pad_id = tile_to_id["P"]
@@ -957,6 +1054,8 @@ def run_generation(root_dir, grid_width, grid_height, num_levels, timeout=2000, 
                 })
                 print(f"Done processing attempt {level_idx + 1}!")
                 success_count += 1
+                txt_path = os.path.join(folder, f"debug_{name}{counter}.txt")
+                save_readable_debug_grid(final_grid_data, id_to_tile, txt_path)
 
             except TimeoutException as e:
                 print(f"Generation timed out on attempt {level_idx + 1}. Saving debug image and recording failure...")
@@ -979,7 +1078,7 @@ def run_generation(root_dir, grid_width, grid_height, num_levels, timeout=2000, 
                 traceback.print_exc()
                 print(f"Unexpected error in {base_dir} on attempt {level_idx + 1}: {e}")
                 failed_count += 1
-
+            
         print(f"\n--- Finished Processing {base_dir} ---")
         print(f"Successful Levels: {success_count}/{num_levels}")
         print(f"Failed Levels: {failed_count}/{num_levels}")
