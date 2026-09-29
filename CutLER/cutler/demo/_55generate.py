@@ -1054,8 +1054,8 @@ def run_generation(root_dir, grid_width, grid_height, num_levels, timeout=2000, 
                 })
                 print(f"Done processing attempt {level_idx + 1}!")
                 success_count += 1
-                txt_path = os.path.join(folder, f"debug_{name}{counter}.txt")
-                save_readable_debug_grid(final_grid_data, id_to_tile, txt_path)
+                # txt_path = os.path.join(folder, f"debug_{name}{counter}.txt")
+                # save_readable_debug_grid(final_grid_data, id_to_tile, txt_path)
 
             except TimeoutException as e:
                 print(f"Generation timed out on attempt {level_idx + 1}. Saving debug image and recording failure...")

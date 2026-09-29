@@ -45,7 +45,7 @@ from metrics_topology import (
 )
 from complex_structure import (
     load_macro_templates, fold_grid, emergence_report, layout_diagnostics,
-    cross_check_ratios,
+    cross_check_ratios, window_counter, fold_name, UNCOLLAPSED,
 )
 
 # ===========================================================================
@@ -54,15 +54,17 @@ from complex_structure import (
 LEVELS_DIR = os.path.join("demo", "imgs", "test")
 CORE_ROOT = os.path.join("Generation", "0CoreDataset")
 COMPLEX_ROOT = os.path.join("Generation", "0NewComplexDataset")
-OUTPUT_FOLDER = os.path.join("Generation", "NewCountBaselines", "all_levels")
+OUTPUT_FOLDER = os.path.join("Generation", "FinalBaselines1", "all_levels")
 
 DATASET_SUFFIX = "_data"        # <level stem> + this = dataset folder name
 LEVEL_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
 CELL_SIZE = 16                  # px per tile; grid size = ceil(level px / this)
 
-NUM_LEVELS = 2
+NUM_LEVELS = 20
 NGRAM_K = 3                     # window size for the n-gram statistics
 EMERGENCE_K = (2, 3)            # sub-block sizes for partial emergence
+PATTERN_KL_K = (2, 3)           # window sizes for the kxk pattern KL
+PATTERN_KL_EPS = 1e-5           # probability floor, as for the 1x1 KL
 MACRO_LAYOUT = "blueprint"      # shape the walk reconstructs and the solver
                                 # stamps; "name" for raw source offsets
 
@@ -78,6 +80,30 @@ LEVEL_CFG = LevelConfig(
 )
 
 CLONE_PATTERN = re.compile(r"(.+?)_((?:split_[LR]_)?tile_.+)_y\d+_x\d+")
+
+def load_source_grid(level):
+    """The source level as a folded cell grid, written by the learner."""
+    for d in (level["complex"], level["core"]):
+        p = os.path.join(d, "source_grid.json")
+        if os.path.exists(p):
+            with open(p) as f:
+                raw = json.load(f)
+            g = np.array([[fold_name(c) for c in row] for row in raw], dtype=object)
+            g[g == "UNKNOWN"] = UNCOLLAPSED      # window_counter skips these
+            return g
+    return None
+
+
+def pattern_kl(gen_counts, ref_counts, eps=PATTERN_KL_EPS):
+    """KL(generated || source) over kxk windows, floored like the 1x1 KL."""
+    if not gen_counts or not ref_counts:
+        return float("nan")
+    keys = list(set(gen_counts) | set(ref_counts))
+    p = np.array([gen_counts.get(k, 0) for k in keys], float)
+    q = np.array([ref_counts.get(k, 0) for k in keys], float)
+    p = p / p.sum() + eps
+    q = q / q.sum() + eps
+    return float(entropy(p / p.sum(), q / q.sum()))
 
 
 # ===========================================================================
@@ -131,7 +157,7 @@ def discover_levels():
 # ===========================================================================
 # Per-batch evaluation
 # ===========================================================================
-def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height):
+def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height, source_grid=None):
     print(f"\n--- Generating {batch_label} Batch "
           f"({grid_width}x{grid_height}) ---")
 
@@ -157,6 +183,14 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
     vocab = list(base_target_ratios.keys())
     target_probs = np.array([float(base_target_ratios.get(k, 1e-5)) for k in vocab])
     target_probs /= target_probs.sum()
+
+    ref_windows = ({k: window_counter([source_grid], k) for k in PATTERN_KL_K}
+                   if source_grid is not None else {})
+
+    with open(os.path.join(dataset_dir, "adjacency_rules.txt")) as f:
+        rule_keys = [k for k in json.load(f) if k not in ("B", "P")]
+    vocab_size = len(rule_keys)
+    declared_macros = len({m.group(1) for m in map(CLONE_PATTERN.match, rule_keys) if m})
 
     batch_results = []
     batch_global_ngrams = Counter()
@@ -201,7 +235,8 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
             grid, id_to_tile, LEVEL_CFG, ngram_size=NGRAM_K)
 
         batch_global_ngrams.update(level_ngrams)
-        folded_grids.append(fold_grid(grid, id_to_tile))
+        folded = fold_grid(grid, id_to_tile)
+        folded_grids.append(folded)
         raw_grids.append((grid, id_to_tile))
 
         row_out = {
@@ -213,9 +248,15 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
             "Collapses": collapses,
             "Complex Pieces": complex_count,
             "KL-Div (1x1)": round(kl_div, 4),
+            "Vocab Size": vocab_size,
+            "Declared Macros": declared_macros,
             "pHash": str(imagehash.phash(Image.open(data["path"]))),
         }
         row_out.update(topo)
+        for k in PATTERN_KL_K:
+            row_out[f"KL-Div ({k}x{k})"] = (
+                round(pattern_kl(window_counter([folded], k), ref_windows[k]), 4)
+                if k in ref_windows else np.nan)
         batch_results.append(row_out)
 
     diversity = pairwise_diversity(folded_grids)
@@ -264,7 +305,8 @@ SECTIONS = (
     ("1. PERFORMANCE & STABILITY",
      ["Time (s)", "Retries", "Collapses", "Complex Pieces", "Uncollapsed"]),
     ("2. STATISTICAL DISTRIBUTIONS",
-     ["KL-Div (1x1)", "N-Gram Entropy", "Compression Ratio", "Repetition Peak"]),
+     ["KL-Div (1x1)", "KL-Div (2x2)", "KL-Div (3x3)", "N-Gram Entropy",
+      "Compression Ratio", "Repetition Peak"]),
     ("3. GROUND TOPOLOGY (ground-connected structure only)",
      ["Ground Coverage", "Ground Level", "Roughness (std)",
       "Roughness (mean step)", "Elevation Std", "Linearity", "Slope"]),
@@ -385,6 +427,10 @@ def evaluate_level(level, out_dir):
     print("=" * 74)
 
     all_results = []
+
+    source_grid = load_source_grid(level)
+    if source_grid is None:
+        print("No source_grid.json - kxk pattern KL will be blank. Re-run the learner.")
 
     core_results, core_fails, core_ngrams, core_extras = evaluate_batch(
         level["core"], "Core", NUM_LEVELS, level["width"], level["height"])

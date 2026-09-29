@@ -494,6 +494,17 @@ class LevelReconstructor:
         significant_conflict_B = cv2.morphologyEx(raw_conflict_B.astype(np.uint8), cv2.MORPH_OPEN, pruning_buffer_kernel).astype(bool)
         id_grid_B[significant_conflict_B] = "UNKNOWN"
 
+        cw_c, ch_c = max(1, self.cell_w), max(1, self.cell_h)
+        rows, cols = -(-h // ch_c), -(-w // cw_c)
+        cell_grid = [["B"] * cols for _ in range(rows)]
+        cell_area = [[0] * cols for _ in range(rows)]
+        for core_key, x, y, pw, ph in placed_instances_B:
+            r, c = int(round(y / ch_c)), int(round(x / cw_c))
+            if 0 <= r < rows and 0 <= c < cols and pw * ph > cell_area[r][c]:
+                cell_grid[r][c] = core_key
+                cell_area[r][c] = pw * ph
+        self.source_cell_grid = cell_grid
+
         if self.cell_w > 0 and self.cell_h > 0:
             cell_area = self.cell_w * self.cell_h
             unique_ids, pixel_counts = np.unique(id_grid_A, return_counts=True)
@@ -523,6 +534,7 @@ class LevelReconstructor:
         self._extract_neighbors_from_grid(placed_instances_A, id_grid_A, h, w, target_dict=real_rules)
 
         clone_pattern = re.compile(r"(.+?)_(tile_.+)_y\d+_x\d+")
+        merged_cores = set()
 
         for clone_id, rules in list(real_rules.items()):
             match = clone_pattern.match(clone_id)
@@ -557,7 +569,8 @@ class LevelReconstructor:
                     continue  
                 core_key = f"{core_key_base}.png" 
 
-                if core_key in ghost_rules:
+                if core_key in ghost_rules and core_key not in merged_cores:
+                    merged_cores.add(core_key)
                     for d in ["top", "bottom", "left", "right"]:
                         for gn, gcount in ghost_rules[core_key][d].items():
                             real_rules[core_key][d][gn] += gcount
@@ -968,6 +981,10 @@ class LevelReconstructor:
             self._save_pruned_reconstruction(level_img_bgra, level_stem, out_base)   
             self.save_adjacency_rules(level_output_dir / "adjacency_rules.txt")
             self.save_frequencies(level_output_dir / "ratios.json")
+
+            with open(level_output_dir / "source_grid.json", "w") as f:
+                json.dump(self.source_cell_grid, f)
+
             self.save_used_tiles(level_output_dir / "tiles")
 
 
