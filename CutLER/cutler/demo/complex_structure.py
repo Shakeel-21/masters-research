@@ -586,7 +586,7 @@ SIZE_BUCKETS = ((2, "1-2"), (4, "3-4"), (9, "5-9"), (16, "10-16"), (10 ** 9, "17
 def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
                      out_dir=None, diagnostics=None, ratio_check=None,
                      complex_raw=None, out_prefix="", write_audit=False,
-                     verbose=True):
+                     verbose=True, source_grid=None):
     """Full analysis. Returns a dict; optionally writes a CSV and summary."""
     if not templates:
         raise ValueError("no macro templates - check the clone naming "
@@ -603,6 +603,8 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
     comp_index = build_position_index(complex_grids) if complex_grids else None
     complex_cells = sum(g.size for g in complex_grids) if complex_grids else 0
     placements = count_placements(complex_raw, templates) if complex_raw else {}
+    src_index = build_position_index([source_grid]) if source_grid is not None else None
+    n_core, n_comp = len(core_grids), len(complex_grids or [])
 
     rows = []
     for name, t in reps.items():
@@ -623,6 +625,12 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
             "core_levels_hit": n_levels,
             "core_emerges": int(n_exact > 0),
         }
+        row["core_per_level"] = round(n_exact / n_core, 3)
+        if src_index is not None:
+            s_exact, _ = count_exact([source_grid], t, src_index)
+            row["source_count"] = s_exact
+            row["source_repeated"] = int(s_exact >= 2)
+
         for k in k_values:
             cov, n_sub = partial_coverage(t, core_wins[k], k)
             row[f"core_cov_{k}x{k}"] = None if cov != cov else round(cov, 4)
@@ -631,10 +639,12 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
             c_exact, c_levels = count_exact(complex_grids, t, comp_index)
             row["complex_exact_count"] = c_exact
             row["complex_levels_hit"] = c_levels
+            row["complex_per_level"] = round(c_exact / n_comp, 3)
             if placements:
                 p_count, p_cells = placements.get(name, (0, 0))
                 row["solver_placements"] = p_count
                 row["clone_cells_written"] = p_cells
+                row["stamped_per_level"] = round(p_count / n_comp, 3)
             in_core, in_comp = n_exact > 0, c_exact > 0
             row["where"] = ("both" if in_core and in_comp else
                             "core_only" if in_core else
@@ -664,6 +674,30 @@ def emergence_report(templates, core_grids, complex_grids=None, k_values=(2, 3),
     n_core_seen = len(emerged)
     n_comp_seen = len(placed)
 
+    if src_index is not None:
+        found = [r for r in rows if r["source_count"] >= 1]
+        rep = [r for r in rows if r["source_count"] >= 2]
+        multi = [r for r in rows if (r.get("distinct_tiles") or 0) > 1]
+        rep_multi = [r for r in multi if r["source_count"] >= 2]
+        S.append("")
+        S.append("0. REUSE IN THE ORIGINAL LEVEL")
+        S.append("   A macro earns its place as a blueprint only if the structure recurs.")
+        S.append(f"   found in source at least once:  {len(found)}/{n_struct}")
+        S.append(f"   repeated (2+ times) in source:  {len(rep)}/{n_struct}"
+                 f"   (multi-tile only: {len(rep_multi)}/{len(multi)})")
+        S.append(f"   total source occurrences:       "
+                 f"{sum(r['source_count'] for r in rows)}")
+        S.append("")
+        S.append(f"   {'macro':<32}{'source':>8}{'core/lvl':>10}"
+                 f"{'complex/lvl':>13}{'stamped/lvl':>13}")
+        for r in sorted(rows, key=lambda r: (-r["source_count"], r["macro"]))[:20]:
+            S.append(f"   {r['macro'][:31]:<32}{r['source_count']:>8}"
+                     f"{r['core_per_level']:>10.2f}"
+                     f"{r.get('complex_per_level', 0):>13.2f}"
+                     f"{r.get('stamped_per_level', 0):>13.2f}")
+        S.append("   source = one original level; the other columns are per "
+                 "generated level, so they are directly comparable.")
+        
     S.append("")
     S.append("1. WHERE THE MACRO STRUCTURES APPEAR")
     S.append("   Each of the declared structures is searched for, as a tile")

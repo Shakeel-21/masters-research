@@ -54,7 +54,7 @@ from complex_structure import (
 LEVELS_DIR = os.path.join("demo", "imgs", "test")
 CORE_ROOT = os.path.join("Generation", "0CoreDataset")
 COMPLEX_ROOT = os.path.join("Generation", "0NewComplexDataset")
-OUTPUT_FOLDER = os.path.join("Generation", "FinalBaselines1", "all_levels")
+OUTPUT_FOLDER = os.path.join("Generation", "0Latest", "all_levels")
 
 DATASET_SUFFIX = "_data"        # <level stem> + this = dataset folder name
 LEVEL_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
@@ -69,7 +69,7 @@ MACRO_LAYOUT = "blueprint"      # shape the walk reconstructs and the solver
                                 # stamps; "name" for raw source offsets
 
 ONLY_LEVELS = ()                # e.g. ("mario-1-1",) to restrict a run
-SKIP_EXISTING = True           # True to skip levels already written
+SKIP_EXISTING = False           # True to skip levels already written
 
 LEVEL_CFG = LevelConfig(
     jump_height=4,              # SMB: ~4 tiles of upward reach
@@ -166,7 +166,7 @@ def evaluate_batch(dataset_dir, batch_label, num_levels, grid_width, grid_height
         grid_width=grid_width,
         grid_height=grid_height,
         num_levels=num_levels,
-        filename="NewCountsApplied.png",
+        filename="0fixedRoof.png",
     )
 
     failed_generations = num_levels - len(generated_data)
@@ -385,7 +385,7 @@ def cross_batch_analysis(level, core_results, complex_results, out_dir,
 # ===========================================================================
 # Macro emergence
 # ===========================================================================
-def run_emergence(level, core_grids, complex_grids, out_dir, complex_raw=None):
+def run_emergence(level, core_grids, complex_grids, out_dir, complex_raw=None, source_grid=None):
     """
     How many of the complex macros does the Core generator build unaided?
 
@@ -414,6 +414,9 @@ def run_emergence(level, core_grids, complex_grids, out_dir, complex_raw=None):
         out_dir=out_dir,
         out_prefix=f"{level['stem']}_",
         write_audit=False,
+        source_grid=source_grid,
+        source_templates=load_macro_templates(complex_folder, layout="name",
+                                              verbose=False),
     )
 
 
@@ -433,11 +436,13 @@ def evaluate_level(level, out_dir):
         print("No source_grid.json - kxk pattern KL will be blank. Re-run the learner.")
 
     core_results, core_fails, core_ngrams, core_extras = evaluate_batch(
-        level["core"], "Core", NUM_LEVELS, level["width"], level["height"])
+        level["core"], "Core", NUM_LEVELS, level["width"], level["height"],
+        source_grid=source_grid)
     all_results.extend(core_results)
 
     complex_results, complex_fails, complex_ngrams, complex_extras = evaluate_batch(
-        level["complex"], "Complex", NUM_LEVELS, level["width"], level["height"])
+        level["complex"], "Complex", NUM_LEVELS, level["width"], level["height"],
+        source_grid=source_grid)
     all_results.extend(complex_results)
 
     if core_results and complex_results:
@@ -451,8 +456,8 @@ def evaluate_level(level, out_dir):
                       core_extras["folded_grids"],
                       complex_extras.get("folded_grids"),
                       out_dir,
-                      complex_raw=complex_extras.get("raw_grids"))
-
+                      complex_raw=complex_extras.get("raw_grids"),
+                      source_grid=source_grid)
     if all_results:
         df = pd.DataFrame(all_results).drop(columns=["Path"])
         out = os.path.join(out_dir,

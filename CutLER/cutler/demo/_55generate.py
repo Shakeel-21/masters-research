@@ -81,7 +81,14 @@ def load_data(rules_file, ratios_file, tiles_dir):
     with open(ratios_file, 'r') as f:
         ratios = json.load(f)
     
-    adjacencies = inject_background_rules(adjacencies, ratios)
+    grid_file = os.path.join(os.path.dirname(rules_file), "source_grid.json")
+    source_grid = None
+    if os.path.exists(grid_file):
+        with open(grid_file) as f:
+            source_grid = json.load(f)
+    else:
+        print(f"  !! no source_grid.json: background edge weight falls back to 1.0")
+    adjacencies = inject_background_rules(adjacencies, ratios, source_grid)
 
     images = {}
     tile_sizes = {} 
@@ -148,6 +155,8 @@ def load_data(rules_file, ratios_file, tiles_dir):
         base_id = tile_to_id.get(f"{m.group(2)}.png")
         if base_id is None or base_id == t_id:
             continue                      # voids have no core tile; skip pooling
+        if int_ratios.get(base_id, 0.0) <= 0.05:   # learner floor: tile only exists in macros
+            continue
         pool_of[t_id] = base_id
         pooled_weight[base_id] = pooled_weight.get(base_id, 0.0) + int_ratios.get(t_id, 0.0)
 
@@ -165,7 +174,21 @@ def get_all_tile_names(adjacencies, id_to_tile):
     pad_id = next(k for k, v in id_to_tile.items() if v == "P")
     return [k for k in adjacencies.keys() if k != pad_id]
 
-def inject_background_rules(adjacencies, ratios):
+
+def _border_background_share(grid):
+    """Share of the source's background cells that lie on each border."""
+    if not grid or not grid[0]:
+        return {}
+    total_b = sum(row.count("B") for row in grid)
+    if total_b == 0:
+        return {}
+    edges = {"top": grid[0], "bottom": grid[-1],
+             "left": [r[0] for r in grid], "right": [r[-1] for r in grid]}
+    # keep B legal on a border the source never shows it on
+    return {d: min(0.99, max(cells.count("B"), 0.5) / total_b)
+            for d, cells in edges.items()}
+
+def inject_background_rules(adjacencies, ratios, source_grid=None):
     if "B" not in adjacencies:
         adjacencies["B"] = { "top": [], "bottom": [], "left": [], "right": [] }
     if "P" not in adjacencies:
@@ -187,8 +210,6 @@ def inject_background_rules(adjacencies, ratios):
         if ["B", sky_to_sky_weight] not in adjacencies["B"][d]:
              adjacencies["B"][d].append(["B", sky_to_sky_weight])
              
-        if ["P", pad_weight] not in adjacencies["B"][d]:
-             adjacencies["B"][d].append(["P", pad_weight])
              
         if ["P", pad_weight] not in adjacencies["P"][d]:
              adjacencies["P"][d].append(["P", pad_weight])
@@ -208,7 +229,15 @@ def inject_background_rules(adjacencies, ratios):
                     inv_d = inverse_dir[direction]
                     if not any(n[0] == tile_name for n in adjacencies["P"][inv_d]):
                         adjacencies["P"][inv_d].append([tile_name, n_weight])
-
+                        
+    share = _border_background_share(source_grid)
+    for d in ("top", "bottom", "left", "right"):
+        others = sum(w for n, w in adjacencies["B"][d]
+                     if n != "P" and not POOL_CLONE_RE.match(n))
+        f = share.get(d)
+        w_pad = pad_weight if f is None else f * others / (1.0 - f)
+        adjacencies["B"][d] = [e for e in adjacencies["B"][d] if e[0] != "P"]
+        adjacencies["B"][d].append(["P", w_pad])
     return adjacencies
 
 def initialize_grid(height, width, playable_tiles):
